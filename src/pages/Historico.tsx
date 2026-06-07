@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiFetch } from "../utils/mockApi";
 import { 
   History, 
   Trash2, 
@@ -38,14 +39,14 @@ export default function Historico() {
       if (viewMode === "lotes") {
         // We pass query param includeDeleted=true if we are viewing the trash tab
         const isLixeira = activeTab === "lixeira";
-        const res = await fetch(`/api/processes?includeDeleted=${isLixeira}`);
+        const res = await apiFetch(`/api/processes?includeDeleted=${isLixeira}`);
         if (!res.ok) {
           throw new Error("Erro ao carregar dados do histórico.");
         }
         const data = await res.json();
         setProcesses(data);
       } else {
-        const res = await fetch("/api/baggages/expired");
+        const res = await apiFetch("/api/baggages/expired");
         if (!res.ok) {
           throw new Error("Erro ao carregar bagagens expiradas ou descartadas.");
         }
@@ -72,7 +73,7 @@ export default function Historico() {
     }
     try {
       setLoading(true);
-      const response = await fetch(`/api/processes/${id}`, {
+      const response = await apiFetch(`/api/processes/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deleted: true })
@@ -94,7 +95,7 @@ export default function Historico() {
   const handleRestore = async (id: string) => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/processes/${id}`, {
+      const response = await apiFetch(`/api/processes/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deleted: false })
@@ -118,7 +119,7 @@ export default function Historico() {
     }
     try {
       setLoading(true);
-      const response = await fetch(`/api/processes/${id}`, {
+      const response = await apiFetch(`/api/processes/${id}`, {
         method: "DELETE"
       });
       if (!response.ok) {
@@ -137,7 +138,7 @@ export default function Historico() {
   const handleRestoreBaggage = async (id: string) => {
     try {
       setLoading(true);
-      const res = await fetch(`/api/baggages/${id}`, {
+      const res = await apiFetch(`/api/baggages/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ restore: true })
@@ -161,7 +162,7 @@ export default function Historico() {
     }
     try {
       setLoading(true);
-      const res = await fetch(`/api/baggages/${id}`, {
+      const res = await apiFetch(`/api/baggages/${id}`, {
         method: "DELETE"
       });
       if (!res.ok) {

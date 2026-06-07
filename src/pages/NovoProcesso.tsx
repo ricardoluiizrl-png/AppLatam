@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiFetch } from "../utils/mockApi";
 import { 
   FileText, 
   Trash2, 
@@ -48,7 +49,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   const fetchBaggages = async () => {
     try {
       setLoadingBags(true);
-      const res = await fetch("/api/baggages");
+      const res = await apiFetch("/api/baggages");
       if (res.ok) {
         const data = await res.json();
         setBagagens(data);
@@ -79,7 +80,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
     };
 
     try {
-      const res = await fetch("/api/baggages", {
+      const res = await apiFetch("/api/baggages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(template)
@@ -111,7 +112,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
     // PUT to update in server JSON DB
     try {
-      await fetch(`/api/baggages/${id}`, {
+      await apiFetch(`/api/baggages/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: sanitizedValue })
@@ -125,7 +126,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   const handleRemoveBagagem = async (id: string) => {
     if (!window.confirm("Deseja realmente remover esta bagagem? Ela será enviada à lixeira de descarte.")) return;
     try {
-      const res = await fetch(`/api/baggages/${id}`, {
+      const res = await apiFetch(`/api/baggages/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deleted: true })
@@ -200,7 +201,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       const compiledHtml = gerarHtmlEmail(mockProcess);
 
       // Call API POST to store
-      const response = await fetch("/api/processes", {
+      const response = await apiFetch("/api/processes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -244,7 +245,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       try {
         setIsSubmitting(true);
         for (const b of bagagens) {
-          await fetch(`/api/baggages/${b.id}`, {
+          await apiFetch(`/api/baggages/${b.id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ deleted: true })

@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
+import { apiFetch } from "../utils/mockApi";
 import { 
   Camera, 
   Upload, 
@@ -38,7 +39,7 @@ export default function LerEtiqueta() {
 
   const fetchSavedBags = async () => {
     try {
-      const res = await fetch("/api/baggages");
+      const res = await apiFetch("/api/baggages");
       if (res.ok) {
         const data = await res.json();
         setSavedLists(data);
@@ -61,6 +62,10 @@ export default function LerEtiqueta() {
         stream.getTracks().forEach(track => track.stop());
       }
 
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error("Seu navegador ou o ambiente de visualização atual (como IFrame ou site sem HTTPS seguro) não suporta acesso direto à câmera.");
+      }
+
       const constraints = {
         video: {
           facingMode: currentFacing,
@@ -77,7 +82,10 @@ export default function LerEtiqueta() {
       }
     } catch (err: any) {
       console.error("Camera access failed:", err);
-      setError("Não foi possível acessar a câmera. Certifique-se de que deu permissões ou utilize a opção de upload de arquivo.");
+      setError(
+        err.message || 
+        "Não foi possível acessar a câmera do dispositivo. Certifique-se de que o site utiliza conexão segura (HTTPS), concedeu permissões, ou use a opção 'Tirar Foto / Enviar Imagem' abaixo."
+      );
     }
   };
 
@@ -119,7 +127,7 @@ export default function LerEtiqueta() {
       // Phase 1 message
       setStatusMessage("Enviando imagem ao servidor...");
       
-      const response = await fetch("/api/ocr", {
+      const response = await apiFetch("/api/ocr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -206,7 +214,7 @@ export default function LerEtiqueta() {
 
     try {
       setLoading(true);
-      const res = await fetch("/api/baggages", {
+      const res = await apiFetch("/api/baggages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newItem)
@@ -231,7 +239,7 @@ export default function LerEtiqueta() {
     if (!window.confirm("Deseja realmente remover esta bagagem? Ela será movida para o Histórico e Lixeira.")) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/baggages/${id}`, {
+      const res = await apiFetch(`/api/baggages/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deleted: true })
@@ -252,7 +260,7 @@ export default function LerEtiqueta() {
       try {
         setLoading(true);
         for (const item of savedLists) {
-          await fetch(`/api/baggages/${item.id}`, {
+          await apiFetch(`/api/baggages/${item.id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ deleted: true })
@@ -319,15 +327,31 @@ export default function LerEtiqueta() {
                 className={`w-full h-full object-cover ${facingMode === "user" ? "-scale-x-100" : ""}`}
               />
             ) : (
-              <div className="text-center p-8 text-slate-500">
-                <Camera className="w-12 h-12 text-slate-700 mx-auto mb-3" />
-                <p className="text-sm">A câmera está desativada</p>
-                <button 
-                  onClick={() => startCamera()}
-                  className="mt-3 inline-flex items-center gap-1.5 bg-[#003087] hover:bg-blue-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm"
-                >
-                  <Play className="w-3.5 h-3.5" /> Ativar Câmera
-                </button>
+              <div className="text-center p-6 text-slate-400 max-w-sm">
+                <div className="relative inline-block mb-3">
+                  <Camera className="w-10 h-10 text-slate-600 mx-auto animate-pulse" />
+                  <div className="absolute -bottom-1 -right-1 bg-amber-500 rounded-full p-0.5 text-slate-950">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <p className="text-sm font-semibold text-slate-200">Acesso direto à câmera offline ou restrito</p>
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Isto ocorre quando o navegador do seu celular bloqueia permissões em frames ou deploys de teste (como Netlify sem SSL completo).
+                </p>
+                <div className="mt-4 flex flex-col sm:flex-row gap-2 justify-center">
+                  <button 
+                    onClick={() => startCamera()}
+                    className="inline-flex items-center justify-center gap-1 bg-[#003087] hover:bg-blue-800 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-sm cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3 animate-spin animate-duration-1000" /> Tentar Novamente
+                  </button>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center justify-center gap-1 bg-[#E31837] hover:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-sm cursor-pointer"
+                  >
+                    <Upload className="w-3 h-3" /> Tirar Foto / Enviar Imagem
+                  </button>
+                </div>
               </div>
             )}
 

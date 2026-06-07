@@ -310,9 +310,9 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   });
 }
 
-// Intercept window.fetch
+// Intercept window.fetch safely
 const originalFetch = window.fetch;
-window.fetch = async function(input, init) {
+export const apiFetch = async function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : (input instanceof Request ? input.url : "");
   
   if (url.startsWith("/api/")) {
@@ -338,3 +338,18 @@ window.fetch = async function(input, init) {
   
   return originalFetch(input, init);
 };
+
+try {
+  (window as any).fetch = apiFetch;
+} catch (e) {
+  try {
+    Object.defineProperty(window, "fetch", {
+      value: apiFetch,
+      configurable: true,
+      writable: true,
+      enumerable: true
+    });
+  } catch (err) {
+    console.error("[MOCK API] Fallback fetch override failed:", err);
+  }
+}

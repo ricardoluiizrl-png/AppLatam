@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiFetch } from "../utils/mockApi";
 import { 
   BarChart, 
   Layers, 
@@ -38,7 +39,7 @@ export default function Dashboard() {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch("/api/processes");
+      const response = await apiFetch("/api/processes");
       if (!response.ok) {
         throw new Error("Não foi possível carregar os dados das bagagens.");
       }
