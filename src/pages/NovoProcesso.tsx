@@ -337,18 +337,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
         </div>
       </div>
 
-      {/* INFORMATIVE RETENTION & FLOW BANNER */}
-      <div className="bg-[#003087]/5 border border-[#003087]/20 rounded-xl p-4 flex items-start gap-3 shadow-xs">
-        <span className="p-1.5 bg-[#003087]/10 text-[#003087] rounded-lg mt-0.5">
-          <Clock className="w-5 h-5" />
-        </span>
-        <div className="text-xs text-[#003087]">
-          <h4 className="font-extrabold font-sans">Mesa de Conciliação em Tempo Real (24 Horas)</h4>
-          <p className="mt-1 leading-relaxed text-[#003087]/85">
-            Todas as etiquetas identificadas por OCR (Ler Etiqueta) ou criadas manualmente são salvas de forma persistente nesta tabela por <strong>24 horas</strong>. Marque as caixas de seleção na primeira coluna para definir quais itens serão compilados e gerados no lote de envio por e-mail. Itens excluídos ou mais antigos que 24h são movidos ao <strong>Histórico & Lixeira</strong>.
-          </p>
-        </div>
-      </div>
+
 
       {/* SEÇÃO 4: LISTA DE COBRANÇAS DE BAGAGENS (MAIN ROWS GRID) */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
