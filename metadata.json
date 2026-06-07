@@ -1,0 +1,6 @@
+{
+  "name": "LatamTrack Pro",
+  "description": "Sistema corporativo interno para funcionários da LATAM Airlines rastrearem e conciliarem bagagens extraviadas/irregulares (PIR).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
