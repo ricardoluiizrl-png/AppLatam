@@ -118,7 +118,7 @@ app.put("/api/processes/:id", (req, res) => {
   }
 
   const db = readDB();
-  const processIndex = db.findIndex((p: any) => p.id === id);
+  const processIndex = db.findIndex((p: any) => p.id?.toString() === id?.toString());
 
   if (processIndex === -1) {
     return res.status(404).json({ error: "Processo não encontrado." });
@@ -134,7 +134,7 @@ app.put("/api/processes/:id", (req, res) => {
 app.delete("/api/processes/:id", (req, res) => {
   const { id } = req.params;
   const db = readDB();
-  const filtered = db.filter((p: any) => p.id !== id);
+  const filtered = db.filter((p: any) => p.id?.toString() !== id?.toString());
 
   if (db.length === filtered.length) {
     return res.status(404).json({ error: "Processo não encontrado." });
@@ -234,7 +234,7 @@ app.put("/api/baggages/:id", (req, res) => {
   const updateData = req.body;
 
   const allBags = readBagDB();
-  const idx = allBags.findIndex((b: any) => b.id === id);
+  const idx = allBags.findIndex((b: any) => b.id?.toString() === id?.toString());
 
   if (idx === -1) {
     return res.status(404).json({ error: "Bagagem não encontrada." });
@@ -261,7 +261,7 @@ app.put("/api/baggages/:id", (req, res) => {
 app.delete("/api/baggages/:id", (req, res) => {
   const { id } = req.params;
   const allBags = readBagDB();
-  const filtered = allBags.filter((b: any) => b.id !== id);
+  const filtered = allBags.filter((b: any) => b.id?.toString() !== id?.toString());
 
   if (allBags.length === filtered.length) {
     return res.status(404).json({ error: "Bagagem não encontrada." });

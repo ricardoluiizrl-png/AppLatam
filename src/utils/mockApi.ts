@@ -108,7 +108,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   if (path.startsWith("/api/processes/")) {
     const id = path.split("/").pop();
     const list = getProcesses();
-    const idx = list.findIndex((p: any) => p.id === id);
+    const idx = list.findIndex((p: any) => p.id?.toString() === id?.toString());
     
     if (idx === -1) {
       return new Response(JSON.stringify({ error: "Processo não encontrado." }), {
@@ -130,7 +130,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
     }
     
     if (method === "DELETE") {
-      const filtered = list.filter((p: any) => p.id !== id);
+      const filtered = list.filter((p: any) => p.id?.toString() !== id?.toString());
       saveProcesses(filtered);
       return new Response(JSON.stringify({ success: true, message: "Processo excluído permanentemente." }), {
         status: 200,
@@ -238,7 +238,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   if (path.startsWith("/api/baggages/")) {
     const id = path.split("/").pop();
     const allBags = getBaggages();
-    const idx = allBags.findIndex((b: any) => b.id === id);
+    const idx = allBags.findIndex((b: any) => b.id?.toString() === id?.toString());
     
     if (idx === -1) {
       return new Response(JSON.stringify({ error: "Bagagem não encontrada." }), {
@@ -267,7 +267,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
     }
     
     if (method === "DELETE") {
-      const filtered = allBags.filter((b: any) => b.id !== id);
+      const filtered = allBags.filter((b: any) => b.id?.toString() !== id?.toString());
       saveBaggages(filtered);
       return new Response(JSON.stringify({ success: true, message: "Bagagem removida permanentemente do banco." }), {
         status: 200,

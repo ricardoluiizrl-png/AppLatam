@@ -124,7 +124,6 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
   // Remove baggage line (soft-delete to lixeira database)
   const handleRemoveBagagem = async (id: string) => {
-    if (!window.confirm("Deseja realmente remover esta bagagem? Ela será enviada à lixeira de descarte.")) return;
     try {
       const res = await apiFetch(`/api/baggages/${id}`, {
         method: "PUT",
@@ -178,12 +177,6 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
     const emptyTags = selectedBaggages.some(b => !b.etiqueta || b.etiqueta.length < 10);
     const emptyPnrs = selectedBaggages.some(b => !b.pnr || b.pnr.length < 6);
-
-    if (emptyTags || emptyPnrs) {
-      if (!window.confirm("Algumas bagagens selecionadas possuem dados incompletos (Etiqueta de 10 dígitos ou PNR de 6). Deseja gerar mesmo assim?")) {
-        return;
-      }
-    }
 
     try {
       setIsSubmitting(true);
@@ -241,24 +234,22 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
   // Reset/Archive active list completely
   const handleClearForm = async () => {
-    if (window.confirm("Deseja realmente arquivar (lixeira) todas as bagagens ativas e limpar os campos?")) {
-      try {
-        setIsSubmitting(true);
-        for (const b of bagagens) {
-          await apiFetch(`/api/baggages/${b.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ deleted: true })
-          });
-        }
-        await fetchBaggages();
-        onActiveUserChange({ nome: "Ricardo Luiz", matricula: "GRU-0564" });
-        setCompanhiaAerea("LATAM Airlines");
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsSubmitting(false);
+    try {
+      setIsSubmitting(true);
+      for (const b of bagagens) {
+        await apiFetch(`/api/baggages/${b.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted: true })
+        });
       }
+      await fetchBaggages();
+      onActiveUserChange({ nome: "Ricardo Luiz", matricula: "GRU-0564" });
+      setCompanhiaAerea("LATAM Airlines");
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

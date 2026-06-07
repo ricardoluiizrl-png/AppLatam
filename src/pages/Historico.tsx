@@ -68,9 +68,6 @@ export default function Historico() {
 
   // Soft Delete handler (Move to Lixeira)
   const handleSoftDelete = async (id: string) => {
-    if (!window.confirm("Deseja realmente mover este processo PIR para a lixeira?")) {
-      return;
-    }
     try {
       setLoading(true);
       const response = await apiFetch(`/api/processes/${id}`, {
@@ -114,9 +111,6 @@ export default function Historico() {
 
   // Permanent Delete Handler for reports
   const handlePermanentDelete = async (id: string) => {
-    if (!window.confirm("ATENÇÃO: Deseja realmente EXCLUIR PERMANENTEMENTE este processo do banco de dados? Esta ação é irreversível.")) {
-      return;
-    }
     try {
       setLoading(true);
       const response = await apiFetch(`/api/processes/${id}`, {
@@ -157,9 +151,6 @@ export default function Historico() {
 
   // Baggage permanent delete
   const handlePermanentDeleteBaggage = async (id: string) => {
-    if (!window.confirm("ATENÇÃO: Deseja realmente EXCLUIR PERMANENTEMENTE esta bagagem do banco de dados?")) {
-      return;
-    }
     try {
       setLoading(true);
       const res = await apiFetch(`/api/baggages/${id}`, {

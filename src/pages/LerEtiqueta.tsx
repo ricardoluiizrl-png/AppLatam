@@ -250,7 +250,6 @@ export default function LerEtiqueta() {
 
   // Remove individual item from OCR queue
   const handleRemoveFromStash = async (id: string) => {
-    if (!window.confirm("Deseja realmente remover esta bagagem? Ela será movida para o Histórico e Lixeira.")) return;
     try {
       setLoading(true);
       const res = await apiFetch(`/api/baggages/${id}`, {
@@ -270,88 +269,25 @@ export default function LerEtiqueta() {
 
   // Clear entire OCR stash
   const handleClearStash = async () => {
-    if (window.confirm("Deseja realmente limpar toda a lista acumulada de leituras?")) {
-      try {
-        setLoading(true);
-        for (const item of savedLists) {
-          await apiFetch(`/api/baggages/${item.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ deleted: true })
-          });
-        }
-        await fetchSavedBags();
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
+    try {
+      setLoading(true);
+      for (const item of savedLists) {
+        await apiFetch(`/api/baggages/${item.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted: true })
+        });
       }
+      await fetchSavedBags();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <div className="space-y-8">
-      {/* EXPLANATORY HEADER & INTRO */}
-      <div id="ocr-instructions-card" className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col md:flex-row gap-6 items-start">
-        <div className="bg-[#003087]/10 p-3 rounded-lg text-[#003087] shrink-0">
-          <Sparkles className="w-8 h-8 text-[#003087]" />
-        </div>
-        <div>
-          <h3 className="text-lg font-bold text-[#003087]">Sistema de Captura OCR Multivolumes</h3>
-          <p className="text-sm text-slate-600 mt-1">
-            Utilize a webcam ou câmera traseira de seu smartphone corporativo para analisar as etiquetas de bagagem (Bag-tag).
-            O sistema extrai automaticamente o **Bag-Tag de 10 dígitos**, o código da reserva **PNR de 6 caracteres**, e o **Voo**. 
-            As leituras são acumuladas abaixo para que você gere um único lote consolidado no formulário.
-          </p>
-        </div>
-      </div>
-
-      {/* CONFIGURAÇÃO DE CHAVE DE API PARA AMBIENTE SEM SERVIDOR (EX: NETLIFY) */}
-      <div id="netlify-gemini-config-card" className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-2.5">
-            <div className="p-2 bg-amber-500/10 rounded-lg text-amber-600 mt-0.5 shrink-0">
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-slate-800">Uso no Netlify (Estabilização da IA Real)</h4>
-              <p className="text-xs text-slate-500 leading-relaxed mt-0.5">
-                Por padrão no Netlify o app roda em modo estático (gerando dados de teste simulados). Para realizar leituras **reais** pela câmera do celular, você pode colar seu token do <strong>Gemini (API Key)</strong> abaixo (salvo de forma 100% segura apenas na memória do seu celular) ou declará-lo como a variável de ambiente <code className="bg-slate-200 px-1 rounded text-red-600">VITE_GEMINI_API_KEY</code> no painel de configurações do Netlify e realizar um novo deploy.
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2 shrink-0">
-            <input
-              type="password"
-              placeholder="Cole sua API Key do Gemini aqui (AI_...)"
-              value={localApiKey}
-              onChange={(e) => handleSaveLocalKey(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono w-48 focus:ring-1 focus:ring-[#003087] outline-none"
-            />
-            {getActiveGeminiKeyStatus().hasKey ? (
-              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center gap-1 shrink-0">
-                <Check className="w-3.5 h-3.5" /> IA Real ({getActiveGeminiKeyStatus().source === "env" ? "Netlify Env" : "Celular"})
-              </span>
-            ) : (
-              <span className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg shrink-0">
-                Simulado (Mock)
-              </span>
-            )}
-          </div>
-        </div>
-        {localApiKey && (
-          <div className="mt-2 text-right">
-            <button
-              onClick={() => handleSaveLocalKey("")}
-              className="text-[10px] text-red-600 hover:text-red-700 font-bold underline cursor-pointer"
-            >
-              Remover Chave do Aparelho (Modo de Simulação)
-            </button>
-          </div>
-        )}
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* VIEWPORT DA CÂMERA E CONTROLES (7 COLUMNS) */}
