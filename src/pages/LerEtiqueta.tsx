@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
-import { apiFetch } from "../utils/mockApi";
+import { apiFetch, getActiveGeminiKeyStatus } from "../utils/mockApi";
 import { 
   Camera, 
   Upload, 
@@ -314,9 +314,9 @@ export default function LerEtiqueta() {
               <AlertTriangle className="w-4 h-4" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-800">Uso no Netlify (Sem Servidor Backend)</h4>
+              <h4 className="text-sm font-bold text-slate-800">Uso no Netlify (Estabilização da IA Real)</h4>
               <p className="text-xs text-slate-500 leading-relaxed mt-0.5">
-                Para que a câmera leia os dados **reais** da etiqueta por IA em servidores estáticos como o Netlify, adicione sua chave de API pessoal do Gemini (armazenada de forma 100% segura e apenas localmente no seu aparelho):
+                Por padrão no Netlify o app roda em modo estático (gerando dados de teste simulados). Para realizar leituras **reais** pela câmera do celular, você pode colar seu token do <strong>Gemini (API Key)</strong> abaixo (salvo de forma 100% segura apenas na memória do seu celular) ou declará-lo como a variável de ambiente <code className="bg-slate-200 px-1 rounded text-red-600">VITE_GEMINI_API_KEY</code> no painel de configurações do Netlify e realizar um novo deploy.
               </p>
             </div>
           </div>
@@ -329,13 +329,13 @@ export default function LerEtiqueta() {
               onChange={(e) => handleSaveLocalKey(e.target.value)}
               className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono w-48 focus:ring-1 focus:ring-[#003087] outline-none"
             />
-            {localApiKey ? (
-              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" /> Ativo
+            {getActiveGeminiKeyStatus().hasKey ? (
+              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center gap-1 shrink-0">
+                <Check className="w-3.5 h-3.5" /> IA Real ({getActiveGeminiKeyStatus().source === "env" ? "Netlify Env" : "Celular"})
               </span>
             ) : (
-              <span className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">
-                Simulado
+              <span className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg shrink-0">
+                Simulado (Mock)
               </span>
             )}
           </div>

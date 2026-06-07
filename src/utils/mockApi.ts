@@ -280,7 +280,8 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   if (path === "/api/ocr") {
     if (method === "POST") {
       const { imageBase64, mimeType } = body || {};
-      const clientKey = localStorage.getItem("client_gemini_api_key");
+      const envKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
+      const clientKey = localStorage.getItem("client_gemini_api_key") || envKey;
 
       if (clientKey) {
         try {
@@ -436,3 +437,16 @@ try {
     console.error("[MOCK API] Fallback fetch override failed:", err);
   }
 }
+
+export function getActiveGeminiKeyStatus(): { hasKey: boolean; source: "localStorage" | "env" | "none" } {
+  const local = localStorage.getItem("client_gemini_api_key") || "";
+  if (local.trim()) {
+    return { hasKey: true, source: "localStorage" };
+  }
+  const envKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
+  if (envKey.trim()) {
+    return { hasKey: true, source: "env" };
+  }
+  return { hasKey: false, source: "none" };
+}
+
