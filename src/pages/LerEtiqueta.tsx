@@ -30,6 +30,20 @@ export default function LerEtiqueta() {
     corTipo: string;
   } | null>(null);
 
+  // Client-side Gemini API key state for static servers (like Netlify)
+  const [localApiKey, setLocalApiKey] = useState(localStorage.getItem("client_gemini_api_key") || "");
+
+  const handleSaveLocalKey = (key: string) => {
+    const trimmed = key.trim();
+    if (trimmed) {
+      localStorage.setItem("client_gemini_api_key", trimmed);
+      setLocalApiKey(trimmed);
+    } else {
+      localStorage.removeItem("client_gemini_api_key");
+      setLocalApiKey("");
+    }
+  };
+
   // Saved reads list loaded from database
   const [savedLists, setSavedLists] = useState<any[]>([]);
 
@@ -290,6 +304,52 @@ export default function LerEtiqueta() {
             As leituras são acumuladas abaixo para que você gere um único lote consolidado no formulário.
           </p>
         </div>
+      </div>
+
+      {/* CONFIGURAÇÃO DE CHAVE DE API PARA AMBIENTE SEM SERVIDOR (EX: NETLIFY) */}
+      <div id="netlify-gemini-config-card" className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-2.5">
+            <div className="p-2 bg-amber-500/10 rounded-lg text-amber-600 mt-0.5 shrink-0">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-slate-800">Uso no Netlify (Sem Servidor Backend)</h4>
+              <p className="text-xs text-slate-500 leading-relaxed mt-0.5">
+                Para que a câmera leia os dados **reais** da etiqueta por IA em servidores estáticos como o Netlify, adicione sua chave de API pessoal do Gemini (armazenada de forma 100% segura e apenas localmente no seu aparelho):
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="password"
+              placeholder="Cole sua API Key do Gemini aqui (AI_...)"
+              value={localApiKey}
+              onChange={(e) => handleSaveLocalKey(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono w-48 focus:ring-1 focus:ring-[#003087] outline-none"
+            />
+            {localApiKey ? (
+              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1.5 rounded-lg flex items-center gap-1">
+                <Check className="w-3.5 h-3.5" /> Ativo
+              </span>
+            ) : (
+              <span className="text-[10px] text-amber-600 font-bold bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">
+                Simulado
+              </span>
+            )}
+          </div>
+        </div>
+        {localApiKey && (
+          <div className="mt-2 text-right">
+            <button
+              onClick={() => handleSaveLocalKey("")}
+              className="text-[10px] text-red-600 hover:text-red-700 font-bold underline cursor-pointer"
+            >
+              Remover Chave do Aparelho (Modo de Simulação)
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

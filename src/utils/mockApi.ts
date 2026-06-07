@@ -279,6 +279,89 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   // --- /api/ocr ---
   if (path === "/api/ocr") {
     if (method === "POST") {
+      const { imageBase64, mimeType } = body || {};
+      const clientKey = localStorage.getItem("client_gemini_api_key");
+
+      if (clientKey) {
+        try {
+          console.log("[MOCK API] Realizando OCR real de alta precisão via Gemini diretamente pelo navegador");
+          const cleanBase64 = imageBase64 ? imageBase64.replace(/^data:image\/\w+;base64,/, "") : "";
+          
+          const promptText = `
+            Você é um assistente especializado em conciliação e rastreamento de bagagens aeroportuárias para a LATAM Airlines.
+            Analise esta imagem de etiqueta de bagagem (bag tag) ou formulário.
+            Extraia os seguintes quatro elementos:
+            1. Código de barras / Número da etiqueta (bagTag): Um código de 10 dígitos (geralmente começa com o código da companhia aérea, por exemplo, '0095' para LATAM). Se houver outros caracteres ou espaços, remova e retorne apenas os 10 dígitos numéricos.
+            2. Código da reserva (pnr): Um código de 6 caracteres alfanuméricos da reserva (Ex: XYHGTR, WRQYUI).
+            3. Número do voo (flight): O voo impresso na etiqueta (Ex: LA8070, LA3402, AD2450).
+            4. cor_tipo: Sugestão de cor ou tipo de mala se perceptível (Ex: Vermelha, Preta de rodinhas, Azul de tecido, etc). Se não for claro, estime ou deixe vazio.
+            
+            Retorne obrigatoriamente um objeto JSON com essas quatro chaves.
+          `;
+
+          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${clientKey}`;
+          const gRes = await originalFetch(gUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: promptText },
+                  {
+                    inlineData: {
+                      mimeType: mimeType || "image/jpeg",
+                      data: cleanBase64
+                    }
+                  }
+                ]
+              }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: "OBJECT",
+                  properties: {
+                    bagTag: { type: "STRING", description: "Número contendo 10 dígitos numéricos." },
+                    pnr: { type: "STRING", description: "Código PNR com exatamente 6 caracteres alfanuméricos." },
+                    flight: { type: "STRING", description: "Prefixo do voo com o número do voo alfanumérico." },
+                    cor_tipo: { type: "STRING", description: "Características visuais de cor ou tipo de mala." }
+                  },
+                  required: ["bagTag", "pnr"]
+                },
+                temperature: 0.1,
+              }
+            })
+          });
+
+          if (!gRes.ok) {
+            const rawText = await gRes.text();
+            console.error("[MOCK API] Gemini Client-side OCR API error:", rawText);
+            throw new Error(`Erro na API do Gemini: ${gRes.status} (${rawText})`);
+          }
+
+          const gData = await gRes.json();
+          const candidateText = gData.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!candidateText) {
+            throw new Error("Não foi possível extrair dados da imagem. O Gemini não retornou nenhum texto.");
+          }
+
+          const parsedResult = JSON.parse(candidateText.trim());
+          return new Response(JSON.stringify(parsedResult), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        } catch (clientErr: any) {
+          console.error("[MOCK API] Error in client-side Gemini OCR execution:", clientErr);
+          return new Response(JSON.stringify({ 
+            error: `Erro de análise OCR (Chave API): ${clientErr.message || clientErr}` 
+          }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+      }
+
       // Simulate Gemini reading a bag tag label
       const randomSuffix = Math.floor(100000 + Math.random() * 900000);
       const randPNR = Math.random().toString(36).substring(2, 8).toUpperCase();
