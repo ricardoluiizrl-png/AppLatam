@@ -4,10 +4,7 @@ const isStaticHost =
   window.location.hostname.includes("vercel.app") || 
   window.location.hostname.includes("github.io") || 
   window.location.hostname.includes("amplifyapp.com") || 
-  window.location.hostname.includes("firebaseapp.com") ||
-  (!window.location.hostname.includes("localhost") && 
-   !window.location.hostname.includes("127.0.0.1") && 
-   !window.location.hostname.includes("run.app"));
+  window.location.hostname.includes("firebaseapp.com");
 
 // Check if localStorage has these; populate with defaults if empty
 if (!localStorage.getItem("processes")) {

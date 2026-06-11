@@ -282,7 +282,7 @@ app.post("/api/ocr", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
     return res.status(500).json({ 
-      error: "Sua chave de API do Gemini não está configurada. Por favor, adicione GEMINI_API_KEY no painel de Secrets no canto superior direito do Google AI Studio."
+      error: "Sua chave de API do Gemini não está configurada no servidor. Se você estiver no Google AI Studio, adicione GEMINI_API_KEY no painel de Secrets (canto superior direito). Se você estiver rodando em produção (como no Render), adicione GEMINI_API_KEY nas variáveis de ambiente (Environment Variables) do seu serviço no painel do Render."
     });
   }
 
