@@ -1,0 +1,57 @@
+{
+  "id": "/",
+  "name": "LatamTrack Pro - Conciliação",
+  "short_name": "LatamTrack",
+  "description": "Sistema de Conciliação de Bagagens Irregulares e Leituras OCR da LATAM Airlines",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a255c",
+  "theme_color": "#003087",
+  "orientation": "portrait",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshot-desktop.jpg",
+      "sizes": "1376x768",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "Painel de Controle de Conciliação"
+    },
+    {
+      "src": "screenshot-mobile.jpg",
+      "sizes": "768x1376",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Leitura de Etiquetas OCR com Câmera"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "pt-BR"
+}
