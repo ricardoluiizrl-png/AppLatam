@@ -11,7 +11,8 @@ import {
   X,
   Edit2,
   Check,
-  UserCheck
+  UserCheck,
+  BarChart3
 } from "lucide-react";
 
 interface AppLayoutProps {
@@ -56,6 +57,7 @@ export default function AppLayout({
     { id: "novo", label: "Novo Processo", icon: FileText, desc: "Formulário PIR / Receita Federal" },
     { id: "ocr", label: "Ler Etiqueta (OCR)", icon: QrCode, desc: "Escaneamento de bagagens e tags" },
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, desc: "Acompanhamento e contadores" },
+    { id: "estatisticas", label: "Estatísticas & Comparativos", icon: BarChart3, desc: "Análise mensal e comparação de situações" },
     { id: "historico", label: "Histórico & Lixeira", icon: History, desc: "Processos e lixeira de descarte" },
   ];
 

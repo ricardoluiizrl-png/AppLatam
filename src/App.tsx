@@ -4,6 +4,7 @@ import NovoProcesso from "./pages/NovoProcesso";
 import LerEtiqueta from "./pages/LerEtiqueta";
 import Dashboard from "./pages/Dashboard";
 import Historico from "./pages/Historico";
+import Estatisticas from "./pages/Estatisticas";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("novo");
@@ -32,6 +33,8 @@ export default function App() {
         return <LerEtiqueta />;
       case "dashboard":
         return <Dashboard />;
+      case "estatisticas":
+        return <Estatisticas />;
       case "historico":
         return <Historico />;
       default:

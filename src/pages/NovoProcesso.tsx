@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Funcionario, Bagagem, SituacaoType, SITUACOES } from "../types";
 import { gerarHtmlEmail } from "../utils/gerarHtmlEmail";
+import { gerarCsvRelatorio, gerarNomeArquivoCsv, formatarDataParaCsv } from "../utils/gerarCsvRelatorio";
 
 interface NovoProcessoProps {
   activeUser: { nome: string; matricula: string };
@@ -42,6 +43,8 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [generatedHtml, setGeneratedHtml] = useState("");
+  const [generatedCsv, setGeneratedCsv] = useState("");
+  const [generatedCsvFilename, setGeneratedCsvFilename] = useState("");
   const [successInfo, setSuccessInfo] = useState<any>(null);
   const [copied, setCopied] = useState(false);
 
@@ -192,6 +195,10 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
       // Compile beautiful inline HTML email
       const compiledHtml = gerarHtmlEmail(mockProcess);
+      
+      // Compile CSV and generate filename matching image
+      const compiledCsv = gerarCsvRelatorio(mockProcess, activeUser);
+      const csvFilename = gerarNomeArquivoCsv(mockProcess);
 
       // Call API POST to store
       const response = await apiFetch("/api/processes", {
@@ -214,8 +221,25 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       // Update local states for presentation
       setSuccessInfo(savedData);
       setGeneratedHtml(compiledHtml);
+      setGeneratedCsv(compiledCsv);
+      setGeneratedCsvFilename(csvFilename);
       setModalOpen(true);
       setCopied(false);
+
+      // Automatically trigger CSV file download instantly so it is already generated and downloaded
+      try {
+        const blob = new Blob([compiledCsv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = csvFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error("Erro no download automático do CSV:", err);
+      }
 
     } catch (err: any) {
       console.error(err);
@@ -230,6 +254,33 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
     navigator.clipboard.writeText(generatedHtml);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const [copiedCsv, setCopiedCsv] = useState(false);
+  const handleCopyCsvData = () => {
+    if (!generatedCsv) return;
+    navigator.clipboard.writeText(generatedCsv);
+    setCopiedCsv(true);
+    setTimeout(() => setCopiedCsv(false), 2000);
+  };
+
+  const handleDownloadCsv = (csvContent?: string, filename?: string) => {
+    const csvToDownload = csvContent || generatedCsv;
+    const nameToDownload = filename || generatedCsvFilename || "sobras_latam.csv";
+    if (!csvToDownload) return;
+    try {
+      const blob = new Blob([csvToDownload], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = nameToDownload;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Erro ao baixar CSV:", err);
+    }
   };
 
   // Reset/Archive active list completely
@@ -268,9 +319,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
               <div className="text-white text-xs opacity-80 uppercase leading-none font-semibold">Formulário de Bagagens Extraviadas</div>
             </div>
           </div>
-          <div className="text-right text-blue-100 text-[10px] leading-tight hidden sm:block">
-            Instruções de Preenchimento<br />Dúvidas: 0800-LATAM-GRU
-          </div>
+
         </div>
         
         {/* Form Body */}
@@ -557,20 +606,19 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
           </button>
         </div>
       </div>
-
-      {/* MODAL PREVIEW HTML EMAIL */}
+      {/* MODAL PREVIEW CSV SPREADSHEET */}
       {modalOpen && (
         <div id="html-generation-modal" className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
             
             {/* MODAL HEADER */}
-            <div className="bg-[#003087] text-white p-6 flex justify-between items-center shrink-0">
+            <div className="bg-[#003087] text-white p-5 flex justify-between items-center shrink-0">
               <div>
                 <h4 className="font-extrabold text-lg flex items-center gap-2">
-                  <Check className="w-5 h-5 text-emerald-400" /> Relatório Consolidado Criado!
+                  <Check className="w-5 h-5 text-emerald-400" /> Relatório CSV Gerado!
                 </h4>
                 <p className="text-xs text-blue-200 mt-1">
-                  Código de e-mail inline gerado com sucesso para envio ao corporativo e Receita Federal.
+                  Arquivo CSV de sobras criado e salvo com sucesso no banco de dados.
                 </p>
               </div>
               <button
@@ -579,81 +627,78 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                   setModalOpen(false);
                   fetchBaggages(); // Refresh bags
                 }}
-                className="bg-white/15 hover:bg-white/20 p-1.5 rounded-full text-white transition-all text-xs font-bold px-3 py-1.5"
+                className="bg-white/15 hover:bg-white/20 p-1.5 rounded-full text-white transition-all text-xs font-bold px-3 py-1.5 cursor-pointer"
               >
-                X Fechar
+                ✕ Fechar
               </button>
             </div>
 
-            {/* MODAL ACCORDION INFO SPLIT (EDIT / PREVIEW) */}
+            {/* MODAL CONTENT CONTAINER */}
             <div className="flex-1 p-6 overflow-y-auto space-y-6">
               
-              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-lg text-emerald-800 flex gap-3 text-xs">
+              {/* SUCCESS MESSAGE */}
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-emerald-800 flex gap-3 text-xs">
                 <div className="bg-emerald-500 rounded-full p-1 text-white shrink-0 self-start">
                   <Check className="w-3.5 h-3.5" />
                 </div>
                 <div>
-                  <p className="font-bold">Salvo no Banco de Dados com sucesso!</p>
-                  <p className="mt-0.5">Identificador do processo: <strong className="font-mono bg-emerald-100 px-1 rounded text-emerald-900">{successInfo?.id}</strong></p>
-                  <p className="mt-2 text-slate-500">O código HTML abaixo possui CSS 100% inline, o que garante compatibilidade total de tabelas e cores no Outlook e Gmail de equipes de aeroportos.</p>
+                  <p className="font-bold text-sm">Salvo com sucesso e Baixado Automaticamente!</p>
+                  <p className="mt-1 text-slate-600">
+                    O arquivo de planilha <strong className="font-mono text-emerald-900 bg-emerald-100 px-1 py-0.5 rounded">{generatedCsvFilename}</strong> já foi gerado e o download iniciou automaticamente no seu navegador.
+                  </p>
                 </div>
               </div>
 
-              {/* COPIADORES & EMAIL ACTIONS */}
-              <div className="flex flex-col gap-4 pb-6 border-b border-slate-200">
-                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+              {/* ACTION BUTTONS & INFO PANEL */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
+                <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
                   <div>
-                    <span className="text-xs font-extrabold text-slate-700 uppercase block">Opções de Envio e Cópia:</span>
-                    <p className="text-[11px] text-slate-500 mt-1">Envie o arquivo HTML diretamente para a Receita Federal ou copie-o para uso manual.</p>
+                    <span className="text-xs font-extrabold text-slate-700 uppercase block">Envio Operacional GRU / Receita:</span>
+                    <p className="text-[11px] text-slate-500 mt-1">Clique no botão abaixo para abrir o Gmail pré-preenchido e apenas anexe o arquivo CSV recém-baixado.</p>
                   </div>
                   
-                  <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    {/* DOWNLOAD AGAIN BUTTON */}
                     <button
                       type="button"
-                      id="btn-copy-generated-html"
-                      onClick={handleCopyHtml}
-                      className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 font-bold text-xs px-4 py-2.5 rounded-lg shadow-sm transition cursor-pointer ${
-                        copied 
+                      onClick={() => handleDownloadCsv()}
+                      className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 font-bold text-xs px-4 py-2.5 rounded-lg shadow-xs bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 transition cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Baixar Arquivo CSV
+                    </button>
+
+                    {/* COPY CSV DATA BUTTON */}
+                    <button
+                      type="button"
+                      onClick={handleCopyCsvData}
+                      className={`flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 font-bold text-xs px-4 py-2.5 rounded-lg shadow-xs transition cursor-pointer ${
+                        copiedCsv 
                           ? "bg-emerald-600 text-white hover:bg-emerald-700" 
                           : "bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300"
                       }`}
                     >
                       <Copy className="w-3.5 h-3.5" />
-                      {copied ? "HTML Copiado com Sucesso!" : "Copiar HTML para E-mail"}
+                      {copiedCsv ? "Dados CSV Copiados!" : "Copiar Texto CSV"}
                     </button>
 
                     {/* DIRECT GMAIL ENVELOPE LAUNCHER */}
                     <button
                       type="button"
                       onClick={() => {
-                        // Automatically copy first to make pasting easy
-                        handleCopyHtml();
-
-                        // Automatically trigger HTML file download for easy drag-and-drop attachment
-                        try {
-                          const blob = new Blob([generatedHtml], { type: "text/html;charset=utf-8" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = "lista_de_sobras.html";
-                          document.body.appendChild(a);
-                          a.click();
-                          document.body.removeChild(a);
-                          URL.revokeObjectURL(url);
-                        } catch (err) {
-                          console.error("Erro ao baixar HTML:", err);
-                        }
+                        // Automatically trigger download again just to make sure they have it
+                        handleDownloadCsv();
 
                         // Standard destination and email template parameters
                         const emailTo = "alfgru.bagagem@rfb.gov.br";
                         const emailSubject = "Lista de sobras";
-                        const emailBody = `Prezada Receita Federal do Brasil,\n\nSegue em anexo o arquivo "lista_de_sobras.html" contendo o relatório consolidado de conciliação de bagagens extraviadas e sobras sob controle operacional da LATAM Airlines no Aeroporto de Guarulhos S/A (GRU).\n\nAtenciosamente,\n${activeUser.nome}\nMatrícula: ${activeUser.matricula}\nLATAM Airlines - GRU Conciliação`;
+                        const emailBody = `Prezada Receita Federal do Brasil,\n\nSegue em anexo o arquivo "${generatedCsvFilename}" contendo o relatório de sobras de bagagem cadastrado no terminal de conciliação LATAM de Guarulhos S/A (GRU).\n\nAtenciosamente,\n${activeUser.nome}\nMatrícula: ${activeUser.matricula}\nLATAM Airlines - GRU Conciliação`;
                         
                         // Compose Gmail Web application link
                         const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emailTo)}&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
                         window.open(gmailUrl, "_blank");
                       }}
-                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 font-extrabold text-xs px-5 py-2.5 rounded-lg shadow-md bg-[#E31837] text-white hover:bg-rose-700 transition cursor-pointer"
+                      className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 font-black text-xs px-6 py-2.5 rounded-lg shadow-md bg-[#E31837] text-white hover:bg-rose-700 transition cursor-pointer"
                     >
                       {/* Logo LATAM minimalist inside button */}
                       <img 
@@ -666,35 +711,170 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                   </div>
                 </div>
 
-                {/* HELPFUL DOCK TIP */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex gap-2.5 items-start">
-                  <div className="p-1.5 bg-[#003087]/10 text-[#003087] rounded-md font-bold text-xs select-none">💡</div>
-                  <div className="text-[11px] text-slate-700 leading-relaxed">
-                    <strong>Como funciona o envio direto:</strong> Ao clicar no botão vermelho <strong className="text-[#E31837]">"Enviar Relatório no Gmail App"</strong>, o sistema <strong>baixa o arquivo HTML "lista_de_sobras.html" automaticamente</strong> para que você possa anexá-lo e também <strong>copia o relatório completo formatado</strong> para sua área de transferência. Basta anexar o arquivo baixado ou pressionar <strong>CTRL+V</strong> no corpo do e-mail do Gmail para inserir a tabela formatada com o logotipo da LATAM!
+                {/* HELPFUL STEP-BY-STEP DOCK */}
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3 items-start">
+                  <div className="p-2 bg-blue-100 text-blue-800 rounded-lg text-sm select-none shrink-0 font-bold">💡</div>
+                  <div className="text-[11.5px] text-slate-700 space-y-1.5 leading-relaxed">
+                    <p className="font-extrabold uppercase text-[10px] tracking-wide text-[#003087]">Como enviar o e-mail de imediato:</p>
+                    <ol className="list-decimal pl-4 space-y-1">
+                      <li>O navegador já baixou a planilha <strong className="text-slate-900">{generatedCsvFilename}</strong> automaticamente na sua pasta de Downloads.</li>
+                      <li>Clique no botão vermelho <strong className="text-[#E31837]">"Enviar Relatório no Gmail App"</strong> acima. Uma nova aba do Gmail se abrirá com o destinatário correto, assunto e mensagem preenchidos de forma padrão.</li>
+                      <li>Na aba do Gmail aberta, basta <strong>arrastar e soltar (drag and drop) o arquivo CSV baixado</strong> ou clicar no ícone de anexo para concluir o envio oficial.</li>
+                    </ol>
                   </div>
                 </div>
               </div>
 
-              {/* VISUAL LAYOUT PREVIEW SANDBOX */}
+              {/* SPREADSHEET DECORATED SECTION */}
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visualização Prévia do E-mail</label>
-                <div 
-                  className="border border-slate-300 rounded-xl overflow-hidden shadow-inner max-h-[450px] overflow-y-auto bg-slate-100 p-4"
-                  dangerouslySetInnerHTML={{ __html: generatedHtml }}
-                />
+                <label className="block text-xs font-black text-slate-500 uppercase mb-2 tracking-wider">
+                  Visualização Prévia do Arquivo Gerado (Identico à Planilha Excel/Sheets)
+                </label>
+
+                {/* GOOGLE SPREADSHEET LAYOUT FRAMEWORK */}
+                <div className="border border-slate-300 rounded-xl overflow-hidden shadow-md bg-[#202124] flex flex-col">
+                  
+                  {/* Google Sheets Header bar */}
+                  <div className="bg-[#202124] px-4 py-3 flex items-center justify-between border-b border-[#3c4043] text-sm text-white">
+                    <div className="flex items-center gap-2.5">
+                      {/* Grid Spreadsheet icon */}
+                      <div className="w-5 h-5 bg-[#107c41] rounded flex items-center justify-center text-[10px] font-black font-sans leading-none select-none text-white">
+                        X
+                      </div>
+                      <span className="font-mono text-xs font-bold text-gray-200 tracking-wide select-all">
+                        {generatedCsvFilename || "sobras_latam.csv"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-400 font-mono bg-white/5 px-2 py-0.5 rounded border border-white/10 select-none">
+                      CSV UTF-8
+                    </div>
+                  </div>
+
+                  {/* Operational Spreadsheet container */}
+                  <div className="overflow-x-auto max-w-full bg-white">
+                    <table className="w-full text-left border-collapse text-xs select-text font-mono">
+                      <thead>
+                        {/* Alphabetical Header Row */}
+                        <tr className="bg-[#f8f9fa] border-b border-[#dadce0] text-[#5f6368] text-center text-[10px] divide-x divide-[#dadce0]">
+                          <th className="w-10 bg-[#f8f9fa] font-normal leading-none py-1 border-r border-[#dadce0]"></th>
+                          <th className="w-32 py-1 select-none font-bold">A</th>
+                          <th className="w-24 py-1 select-none font-bold">B</th>
+                          <th className="w-32 py-1 select-none font-bold">C</th>
+                          <th className="w-32 py-1 select-none font-bold">D</th>
+                          <th className="w-28 py-1 select-none font-bold">E</th>
+                          <th className="w-32 py-1 select-none font-bold">F</th>
+                          <th className="w-36 py-1 select-none font-bold">G</th>
+                          <th className="w-56 py-1 select-none font-bold">H</th>
+                        </tr>
+
+                        {/* Column Titles Row (Row #1 in target sheet view) */}
+                        <tr className="bg-white border-b border-[#dadce0] text-slate-900 font-extrabold text-[11px] divide-x divide-[#dadce0]">
+                          <td className="bg-[#f8f9fa] text-[#5f6368] font-normal text-center select-none py-2 border-r border-[#dadce0]">1</td>
+                          <td className="px-3 py-2 bg-slate-50">DATA_LEITURA</td>
+                          <td className="px-3 py-2 bg-slate-50">SITUACAO</td>
+                          <td className="px-3 py-2 bg-slate-50">ETIQUETA</td>
+                          <td className="px-3 py-2 bg-slate-50">RESERVA</td>
+                          <td className="px-3 py-2 bg-slate-50">VOO_ORIGEM</td>
+                          <td className="px-3 py-2 bg-slate-50">DATA_VOO_ORIGE</td>
+                          <td className="px-3 py-2 bg-slate-50">COR_TIPO</td>
+                          <td className="px-3 py-2 bg-slate-50">OBSERVACAO</td>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#dadce0]">
+                        {/* Data Rows mapped from chosen list items */}
+                        {(successInfo?.bagagens || bagagens.filter(b => selectedBagIds.includes(b.id))).map((bag: Bagagem, index: number) => {
+                          const rowNum = index + 2; // Rows starts at 2 after header
+                          return (
+                            <tr key={bag.id} className="hover:bg-blue-50/40 text-slate-800 text-[11px] divide-x divide-[#dadce0] transition">
+                              <td className="bg-[#f8f9fa] text-[#5f6368] font-normal text-center select-none py-2 border-r border-[#dadce0] font-sans font-medium text-[10px] w-10 sticky left-0 z-10">
+                                {rowNum}
+                              </td>
+                              <td className="px-3 py-2 text-slate-500 font-sans">
+                                {formatarDataParaCsv(successInfo?.createdAt || new Date().toISOString())}
+                              </td>
+                              <td className="px-3 py-2 text-center font-bold font-sans">
+                                <span className="inline-block outline-hidden">
+                                  {bag.situacao}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 font-mono font-medium tracking-wide text-slate-900 select-all">
+                                {bag.etiqueta || "-"}
+                              </td>
+                              <td className="px-3 py-2 font-mono font-bold text-indigo-700 select-all">
+                                {bag.pnr || "-"}
+                              </td>
+                              <td className="px-3 py-2 font-sans font-semibold text-[#003087]">
+                                {bag.vooOrigem || "-"}
+                              </td>
+                              <td className="px-3 py-2 text-slate-500">
+                                {formatarDataParaCsv(bag.dataVoo) || "-"}
+                              </td>
+                              <td className="px-3 py-2 text-slate-700 text-xs">
+                                {bag.corTipo || "-"}
+                              </td>
+                              <td className="px-3 py-2 text-slate-600 italic font-sans text-xs max-w-xs truncate" title={bag.observacoes}>
+                                {bag.observacoes || ""}
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {/* Signature Row exactly matching Excel bottom pattern */}
+                        {(() => {
+                          const currentBags = successInfo?.bagagens || bagagens.filter(b => selectedBagIds.includes(b.id));
+                          const signatureRowNumber = currentBags.length + 2;
+                          const primeiroNome = (activeUser?.nome || "OPERADOR").trim().split(" ")[0].toUpperCase();
+                          const signatureString = `${primeiroNome} / ${activeUser?.matricula || "0"}`;
+                          return (
+                            <tr className="bg-slate-50 border-b border-[#dadce0] text-slate-800 text-[11px] divide-x divide-[#dadce0] transition font-bold font-sans">
+                              <td className="bg-[#f8f9fa] text-[#5f6368] font-normal text-center select-none py-2 border-r border-[#dadce0] font-sans font-medium text-[10px] w-10 sticky left-0 z-10">
+                                {signatureRowNumber}
+                              </td>
+                              <td className="px-3 py-2 text-slate-500 font-sans font-normal">
+                                {formatarDataParaCsv(successInfo?.createdAt || new Date().toISOString())}
+                              </td>
+                              <td className="px-3 py-2 text-center text-[#E31837] font-extrabold uppercase">
+                                FC
+                              </td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
+                                0
+                              </td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
+                                0
+                              </td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
+                                0
+                              </td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
+                                0
+                              </td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
+                                0
+                              </td>
+                              <td className="px-3 py-2 text-slate-900 font-mono tracking-wide select-all font-black text-right pr-4">
+                                {signatureString}
+                              </td>
+                            </tr>
+                          );
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+
+                </div>
               </div>
 
             </div>
 
             {/* MODAL FOOTER */}
-            <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-end shrink-0">
+            <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-end shrink-0 gap-3">
               <button
                 type="button"
                 onClick={() => {
                   setModalOpen(false);
                   fetchBaggages(); // Refresh bags
                 }}
-                className="bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-sm px-6 py-2 rounded-lg"
+                className="bg-[#003087] hover:bg-blue-900 text-white font-extrabold text-xs px-6 py-2.5 rounded-lg transition-all shadow-xs cursor-pointer"
               >
                 Concluir e Voltar
               </button>
