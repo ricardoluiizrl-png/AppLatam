@@ -232,20 +232,6 @@ export default function LerEtiqueta() {
       }
 
       setStream(mediaStream);
-      if (videoRef.current) {
-        const video = videoRef.current;
-        video.srcObject = mediaStream;
-        
-        // Forçar ativação explícita de vídeo em dispositivos móveis (muito importante para iPhones/iOS Safari)
-        video.onloadedmetadata = () => {
-          video.play()
-            .then(() => console.log("Câmera reproduzida com sucesso via API play()"))
-            .catch(e => {
-              console.error("Falha ao dar play automático, tentando segunda tentativa de acionamento:", e);
-              video.play().catch(pErr => console.error("Falha secundária de reprodução:", pErr));
-            });
-        };
-      }
     } catch (err: any) {
       console.error("Camera access failed:", err);
       setError(
@@ -263,15 +249,37 @@ export default function LerEtiqueta() {
     }
   };
 
+  // Effect to assign the camera stream to the video element and handle state cleanup on changes/unmount
+  useEffect(() => {
+    if (stream && videoRef.current) {
+      const video = videoRef.current;
+      video.srcObject = stream;
+      
+      // Forçar ativação explícita de vídeo em dispositivos móveis (muito importante para iPhones/iOS Safari)
+      video.onloadedmetadata = () => {
+        video.play()
+          .then(() => console.log("Câmera reproduzida com sucesso via API play()"))
+          .catch(e => {
+            console.error("Falha ao dar play automático, tentando segunda tentativa de acionamento:", e);
+            video.play().catch(pErr => console.error("Falha secundária de reprodução:", pErr));
+          });
+      };
+    }
+
+    return () => {
+      // Quando o stream mudar ou o componente desmontar, encerra as tracks passadas
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          track.stop();
+          console.log("Track de câmera interrompida no cleanup:", track.label);
+        });
+      }
+    };
+  }, [stream]);
+
   // Start camera automatically if not already started
   useEffect(() => {
     startCamera();
-    return () => {
-      // Clean up stream on unmount
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
   }, []);
 
   // Process selected or captured image
