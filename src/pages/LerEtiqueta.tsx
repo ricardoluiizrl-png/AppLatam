@@ -162,43 +162,95 @@ export default function LerEtiqueta() {
         throw new Error("Seu navegador ou o ambiente de visualização atual (como IFrame ou site sem HTTPS seguro) não suporta acesso direto à câmera.");
       }
 
-      const constraints = {
-        video: {
-          facingMode: { exact: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          aspectRatio: { ideal: 1.7777777778 }
-        },
-        audio: false
-      };
+      let mediaStream: MediaStream | null = null;
+      let lastError: any = null;
 
-      // Fallback if environment camera constraint is too strict
-      let mediaStream;
+      // Nível 1: Câmera traseira ideal com resoluções específicas
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (e) {
-        // Fallback without 'exact' if it fails on some browsers
-        const fallbackConstraints = {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: "environment",
+            facingMode: { exact: "environment" },
             width: { ideal: 1280 },
             height: { ideal: 720 },
             aspectRatio: { ideal: 1.7777777778 }
           },
           audio: false
-        };
-        mediaStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+        });
+      } catch (err) {
+        console.warn("Falha no nível 1 (Câmera traseira ideal):", err);
+        lastError = err;
+      }
+
+      // Nível 2: Câmera traseira genérica com resoluções recomendadas
+      if (!mediaStream) {
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: "environment",
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              aspectRatio: { ideal: 1.7777777778 }
+            },
+            audio: false
+          });
+        } catch (err) {
+          console.warn("Falha no nível 2 (Câmera traseira sem exact):", err);
+          lastError = err;
+        }
+      }
+
+      // Nível 3: Câmera traseira básica sem limitações de resolução (evita OverconstrainedError em aparelhos antigos)
+      if (!mediaStream) {
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: "environment"
+            },
+            audio: false
+          });
+        } catch (err) {
+          console.warn("Falha no nível 3 (Câmera traseira básica):", err);
+          lastError = err;
+        }
+      }
+
+      // Nível 4: Qualquer sensor de vídeo do sistema (evita falhas completas se houver apenas câmera frontal ou restrições graves)
+      if (!mediaStream) {
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        } catch (err) {
+          console.warn("Falha no nível 4 (Qualquer câmera geral):", err);
+          lastError = err;
+        }
+      }
+
+      if (!mediaStream) {
+        throw lastError || new Error("Nenhum fluxo de vídeo pôde ser iniciado.");
       }
 
       setStream(mediaStream);
       if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
+        const video = videoRef.current;
+        video.srcObject = mediaStream;
+        
+        // Forçar ativação explícita de vídeo em dispositivos móveis (muito importante para iPhones/iOS Safari)
+        video.onloadedmetadata = () => {
+          video.play()
+            .then(() => console.log("Câmera reproduzida com sucesso via API play()"))
+            .catch(e => {
+              console.error("Falha ao dar play automático, tentando segunda tentativa de acionamento:", e);
+              video.play().catch(pErr => console.error("Falha secundária de reprodução:", pErr));
+            });
+        };
       }
     } catch (err: any) {
       console.error("Camera access failed:", err);
       setError(
         err.message || 
-        "Não foi possível acessar a câmera do dispositivo. Certifique-se de que o site utiliza conexão segura (HTTPS), concedeu permissões, ou use a opção 'Tirar Foto / Enviar Imagem' abaixo."
+        "Não foi possível acessar a câmera do dispositivo. Certifique-se de que o site utiliza conexão segura (HTTPS), concedeu permissões para a câmera nas configurações do navegador ou use a opção 'Enviar Arquivo / Imagem' logo abaixo."
       );
     }
   };
