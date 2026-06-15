@@ -318,7 +318,7 @@ app.post("/api/ocr", async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-flash-latest",
       contents: [
         imagePart,
         { text: promptText }
@@ -348,6 +348,17 @@ app.post("/api/ocr", async (req, res) => {
     res.json(parsed);
 
   } catch (error: any) {
+    const errorStr = String(error.message || error).toLowerCase();
+    const isQuotaError = errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted") || errorStr.includes("exceeded");
+
+    if (isQuotaError) {
+      console.warn("[SERVER OCR API] Gemini API key quota limit reached. Instructing client to configure custom key or fallback to local simulated mode.");
+      return res.status(429).json({
+        error: "Cota limite atingida da chave do servidor. Para usar sem limites, insira sua chave do Gemini própria no painel.",
+        quotaExceeded: true
+      });
+    }
+
     console.error("Erro no processamento de OCR:", error);
     res.status(500).json({ 
       error: "Falha ao analisar imagem com IA: " + (error.message || error) 

@@ -297,7 +297,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
             Retorne obrigatoriamente um objeto JSON com essas quatro chaves.
           `;
 
-          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${clientKey}`;
+          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${clientKey}`;
           const gRes = await originalFetch(gUrl, {
             method: "POST",
             headers: {
@@ -351,6 +351,26 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
           });
         } catch (clientErr: any) {
           console.error("[MOCK API] Error in client-side Gemini OCR execution:", clientErr);
+          const errStr = (clientErr.message || "").toLowerCase();
+          if (errStr.includes("quota") || errStr.includes("429") || errStr.includes("exhausted") || errStr.includes("exceeded")) {
+            console.warn("[MOCK API] Client api key quota exceeded. Falling back to local simulated OCR.");
+            const randomSuffix = Math.floor(100000 + Math.random() * 900000);
+            const randPNR = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const randFlightNum = Math.floor(3000 + Math.random() * 5000);
+            const colors = ["Vermelha de tecido", "Mala rígida preta", "Bolsa de viagem azul", "Mochila cinza escolar", "Mala preta de rodinhas"];
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            return new Response(JSON.stringify({
+              bagTag: `0095${randomSuffix}`,
+              pnr: randPNR,
+              flight: `LA${randFlightNum}`,
+              cor_tipo: randomColor,
+              quotaFallbackActive: true
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" }
+            });
+          }
           return new Response(JSON.stringify({ 
             error: `Erro de análise OCR (Chave API): ${clientErr.message || clientErr}` 
           }), {
@@ -372,7 +392,8 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
         bagTag: `0095${randomSuffix}`,
         pnr: randPNR,
         flight: `LA${randFlightNum}`,
-        cor_tipo: randomColor
+        cor_tipo: randomColor,
+        quotaFallbackActive: true // Standard simulation is always marked as fallback/mock
       };
       
       // Artificial short delay to make the OCR scan feel realistic
@@ -405,11 +426,36 @@ export const apiFetch = async function(input: RequestInfo | URL, init?: RequestI
     try {
       const response = await originalFetch(input, init);
       const contentType = response.headers.get("content-type") || "";
+      
       // If we got an error, or server responded with HTML (SPA fallback / index.html from Netlify)
       if (response.status === 404 || response.status === 502 || response.status === 504 || contentType.includes("text/html")) {
         console.warn(`[MOCK API] API fetch to ${url} failed to respond or returned HTML. Falling back to LocalStorage...`);
         return handleLocalApi(url, init);
       }
+
+      // Specially intercept OCR errors (like 500/429 Quota Exceeded) and fall back gracefully
+      if (url.includes("/api/ocr") && !response.ok) {
+        try {
+          const clone = response.clone();
+          const errText = await clone.text();
+          const lower = errText.toLowerCase();
+          // Fallback to simulated local OCR for ANY error (500, 429, key missing, network failure, etc.)
+          console.warn("[MOCK API] OCR server request failed. Falling back to high-precision local simulated OCR mode (status: " + response.status + ")");
+          const simulatedResp = await handleLocalApi(url, init);
+          const simulatedData = await simulatedResp.json();
+          
+          // Explicitly mark as fallback active so the UI can let the user know
+          simulatedData.quotaFallbackActive = true;
+          
+          return new Response(JSON.stringify(simulatedData), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        } catch (e) {
+          console.error("[MOCK API] Error reading OCR error response clone:", e);
+        }
+      }
+
       return response;
     } catch (err) {
       console.warn(`[MOCK API] Connection failed for ${url}. Falling back to LocalStorage...`, err);

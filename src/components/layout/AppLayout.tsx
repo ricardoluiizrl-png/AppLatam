@@ -90,6 +90,16 @@ export default function AppLayout({
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
+        {/* BACKGROUND IMAGE DECORATION (AVIATION THEME WITH GENTLE OPACITY) */}
+        <div 
+          className="absolute inset-0 pointer-events-none z-0 select-none opacity-20 bg-cover bg-center mix-blend-overlay"
+          style={{
+            backgroundImage: "url('https://media.base44.com/images/public/user_6a0fbf5247f6d28fc0714536/ade4ea0e9_image.jpg')",
+          }}
+        />
+        {/* SUBTLE OVERLAY GRADIENT TO PROTECT CONTRAST AND CLICKABILITY */}
+        <div className="absolute inset-0 pointer-events-none z-0 bg-gradient-to-b from-[#0a255c]/95 via-[#0a255c]/85 to-[#051129]/95" />
+
         {/* SIDEBAR LOGO */}
         <div className="p-6 border-b border-white/10 relative z-10">
           <div className="flex items-center justify-between">
@@ -115,13 +125,7 @@ export default function AppLayout({
         {/* MENU ITEMS (OPERACIONAL) */}
         <nav 
           id="sidebar-nav" 
-          className="flex-1 py-4 space-y-0.5 relative overflow-y-auto"
-          style={{
-            backgroundImage: "linear-gradient(to bottom, rgba(10, 37, 92, 0.55), rgba(5, 17, 41, 0.75)), url('https://media.base44.com/images/public/user_6a0fbf5247f6d28fc0714536/ade4ea0e9_image.jpg')",
-            backgroundSize: "100% auto",
-            backgroundRepeat: "repeat",
-            backgroundPosition: "top center"
-          }}
+          className="flex-1 py-4 space-y-0.5 relative overflow-y-auto z-10 bg-transparent"
         >
           <div className="px-6 py-2 text-[10px] uppercase tracking-widest text-blue-300 font-extrabold mb-2 relative z-10">Operacional</div>
           {menuItems.map((item) => {

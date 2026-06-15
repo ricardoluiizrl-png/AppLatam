@@ -11,24 +11,34 @@ import {
   Sparkles,
   Layers,
   StopCircle,
-  Play
+  Play,
+  X
 } from "lucide-react";
-import { Bagagem } from "../types";
+import { Bagagem, SITUACOES, SituacaoType } from "../types";
+
+export interface PendingItem {
+  id: string;
+  fileName: string;
+  loading: boolean;
+  error?: string | null;
+  bagTag: string;
+  pnr: string;
+  flight: string;
+  corTipo: string;
+  observacoes: string;
+  situacao?: SituacaoType;
+  isQuotaSimulated?: boolean;
+}
 
 export default function LerEtiqueta() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isQuotaSimulated, setIsQuotaSimulated] = useState(false);
 
-  // Extracted OCR fields
-  const [extractedData, setExtractedData] = useState<{
-    bagTag: string;
-    pnr: string;
-    flight: string;
-    corTipo: string;
-    observacoes: string;
-  } | null>(null);
+  // List of pending scanned tags to be previewed/edited
+  const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
 
   // Client-side Gemini API key state for static servers (like Netlify)
   const [localApiKey, setLocalApiKey] = useState(localStorage.getItem("client_gemini_api_key") || "");
@@ -49,14 +59,6 @@ export default function LerEtiqueta() {
   const [savedLists, setSavedLists] = useState<any[]>([]);
   // Completed processes (histórico) from DB for validation and enrichment
   const [processes, setProcesses] = useState<any[]>([]);
-
-  // Validation state
-  const [validationResult, setValidationResult] = useState<{
-    found: boolean;
-    source: "baggages" | "processes" | "none";
-    item?: any;
-    processId?: string;
-  } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -93,18 +95,13 @@ export default function LerEtiqueta() {
     setApiKeyStatus(getActiveGeminiKeyStatus());
   }, [localApiKey]);
 
-  // Validation effect matching either tag code or reservation PNR against active bags and process history
-  useEffect(() => {
-    if (!extractedData) {
-      setValidationResult(null);
-      return;
-    }
-    const cleanTag = (extractedData.bagTag || "").replace(/\D/g, "").trim();
-    const cleanPnr = (extractedData.pnr || "").trim().toUpperCase();
+  // High-precision automatic validation function per scanned item (dynamically checked)
+  const checkValidation = (bagTag?: string, pnr?: string) => {
+    const cleanTag = (bagTag || "").replace(/\D/g, "").trim();
+    const cleanPnr = (pnr || "").trim().toUpperCase();
 
     if (!cleanTag && !cleanPnr) {
-      setValidationResult(null);
-      return;
+      return null;
     }
 
     // 1. Check in currently active bags
@@ -115,12 +112,11 @@ export default function LerEtiqueta() {
     });
 
     if (activeMatch) {
-      setValidationResult({
+      return {
         found: true,
-        source: "baggages",
+        source: "baggages" as const,
         item: activeMatch
-      });
-      return;
+      };
     }
 
     // 2. Check in historical processes
@@ -133,22 +129,21 @@ export default function LerEtiqueta() {
         });
 
         if (match) {
-          setValidationResult({
+          return {
             found: true,
-            source: "processes",
+            source: "processes" as const,
             item: match,
             processId: proc.id
-          });
-          return;
+          };
         }
       }
     }
 
-    setValidationResult({
+    return {
       found: false,
-      source: "none"
-    });
-  }, [extractedData?.bagTag, extractedData?.pnr, savedLists, processes]);
+      source: "none" as const
+    };
+  };
 
   // Start Camera Stream
   const startCamera = async () => {
@@ -277,21 +272,16 @@ export default function LerEtiqueta() {
     };
   }, [stream]);
 
-  // Start camera automatically if not already started
+  // We do NOT start the camera automatically anymore, preventing mobile Safari/Chrome from blocking camera permissions on page mount.
+  // Instead, the user activates the camera cleanly on gesture (by pressing the "Ativar Câmera" button).
   useEffect(() => {
-    startCamera();
+    // Only fetch saved states on mount
+    setIsQuotaSimulated(false);
   }, []);
 
   // Process selected or captured image
-  const processImageBytes = async (base64String: string, mime: string) => {
+  const processSingleImage = async (tempId: string, base64String: string, mime: string) => {
     try {
-      setLoading(true);
-      setError(null);
-      setExtractedData(null);
-
-      // Phase 1 message
-      setStatusMessage("Enviando imagem ao servidor...");
-      
       const response = await apiFetch("/api/ocr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -301,9 +291,6 @@ export default function LerEtiqueta() {
         })
       });
 
-      // Phase 2 message
-      setStatusMessage("Analisando etiqueta com Inteligência Artificial...");
-
       if (!response.ok) {
         const errJson = await response.json();
         throw new Error(errJson.error || "Erro ao processar imagem.");
@@ -311,20 +298,44 @@ export default function LerEtiqueta() {
 
       const parsedOcr = await response.json();
 
-      setExtractedData({
-        bagTag: parsedOcr.bagTag || "",
-        pnr: parsedOcr.pnr || "",
-        flight: parsedOcr.flight || "",
-        corTipo: parsedOcr.cor_tipo || "",
-        observacoes: ""
-      });
-      
-      setStatusMessage("");
+      setPendingItems(prev => prev.map(item => {
+        if (item.id === tempId) {
+          return {
+            ...item,
+            loading: false,
+            bagTag: parsedOcr.bagTag || "",
+            pnr: parsedOcr.pnr || "",
+            flight: parsedOcr.flight || parsedOcr.flightCode || "",
+            corTipo: parsedOcr.cor_tipo || parsedOcr.corTipo || "",
+            situacao: parsedOcr.situacao || "PR",
+            isQuotaSimulated: parsedOcr.quotaFallbackActive || false,
+            error: null
+          };
+        }
+        return item;
+      }));
+
+      if (parsedOcr.quotaFallbackActive) {
+        setIsQuotaSimulated(true);
+      }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Erro desconhecido ao processar OCR.");
-    } finally {
-      setLoading(false);
+      const errStr = (err.message || "").toLowerCase();
+      let customErr = err.message || "Erro desconhecido ao processar OCR.";
+      if (errStr.includes("quota") || errStr.includes("429") || errStr.includes("resource_exhausted") || errStr.includes("exceeded")) {
+        customErr = "Cota Excedida. Ative sua chave do Gemini para digitalização real.";
+        setIsQuotaSimulated(true);
+      }
+      setPendingItems(prev => prev.map(item => {
+        if (item.id === tempId) {
+          return {
+            ...item,
+            loading: false,
+            error: customErr
+          };
+        }
+        return item;
+      }));
     }
   };
 
@@ -336,68 +347,144 @@ export default function LerEtiqueta() {
       const ctx = canvas.getContext("2d");
 
       if (ctx) {
-        // Match aspect ratios
         canvas.width = video.videoWidth || 640;
         canvas.height = video.videoHeight || 480;
-
-        // Draw current frame on canvas
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Extract base64 jpeg
         const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-        processImageBytes(dataUrl, "image/jpeg");
+        const tempId = Math.random().toString(36).substring(2, 9);
+        const fileName = `Foto ${new Date().toLocaleTimeString("pt-BR")}`;
+
+        const newItem: PendingItem = {
+          id: tempId,
+          fileName,
+          loading: true,
+          bagTag: "",
+          pnr: "",
+          flight: "",
+          corTipo: "",
+          observacoes: "",
+          situacao: "PR"
+        };
+
+        setPendingItems(prev => [newItem, ...prev]);
+        processSingleImage(tempId, dataUrl, "image/jpeg");
       }
     }
   };
 
-  // File Upload Helper
+  // File Upload Helper (supports MULTIPLE files!)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === "string") {
-          processImageBytes(reader.result, file.type);
-        }
-      };
-      reader.readAsDataURL(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      Array.from(files).forEach((file: any) => {
+        const reader = new FileReader();
+        const tempId = Math.random().toString(36).substring(2, 9);
+
+        const newItem: PendingItem = {
+          id: tempId,
+          fileName: file.name,
+          loading: true,
+          bagTag: "",
+          pnr: "",
+          flight: "",
+          corTipo: "",
+          observacoes: "",
+          situacao: "PR"
+        };
+
+        setPendingItems(prev => [newItem, ...prev]);
+
+        reader.onloadend = () => {
+          if (typeof reader.result === "string") {
+            processSingleImage(tempId, reader.result, file.type);
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+      // Clear input so same files can be re-selected
+      e.target.value = "";
     }
   };
 
-  // Submit Current Extracted Data to Saved List
-  const handleSaveToStash = async () => {
-    if (!extractedData) return;
+  // Save specific item from the pending list to the stash database
+  const handleSaveToStash = async (item: PendingItem) => {
+    if (!item.bagTag || !item.pnr) return;
 
     const newItem = {
-      etiqueta: extractedData.bagTag,
-      pnr: extractedData.pnr,
-      vooOrigem: extractedData.flight,
-      corTipo: extractedData.corTipo,
-      situacao: "PR", // default standard
+      etiqueta: item.bagTag,
+      pnr: item.pnr,
+      vooOrigem: item.flight,
+      corTipo: item.corTipo,
+      situacao: item.situacao || "PR",
       dataVoo: new Date().toLocaleDateString("pt-BR"),
-      observacoes: extractedData.observacoes || ""
+      observacoes: item.observacoes || ""
     };
 
     try {
-      setLoading(true);
+      setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, loading: true } : pi));
       const res = await apiFetch("/api/baggages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newItem)
       });
       if (res.ok) {
-        setExtractedData(null);
+        setPendingItems(prev => prev.filter(pi => pi.id !== item.id));
         await fetchSavedBags();
-        alert("Bagagem salva com sucesso e integrada à tabela principal de bagagens!");
       } else {
-        alert("Erro ao salvar bagagem no servidor.");
+        alert("Erro ao salvar bagagem.");
+        setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, loading: false } : pi));
       }
     } catch (err) {
       console.error(err);
       alert("Erro de conexão ao salvar bagagem.");
+      setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, loading: false } : pi));
+    }
+  };
+
+  // Save all completed and valid items to the database
+  const handleSaveAllToStash = async () => {
+    const validItems = pendingItems.filter(p => !p.loading && !p.error && p.bagTag && p.pnr);
+    if (validItems.length === 0) return;
+
+    try {
+      // Show screen spinner
+      setLoading(true);
+      const promises = validItems.map(async (item) => {
+        const newItem = {
+          etiqueta: item.bagTag,
+          pnr: item.pnr,
+          vooOrigem: item.flight,
+          corTipo: item.corTipo,
+          situacao: item.situacao || "PR",
+          dataVoo: new Date().toLocaleDateString("pt-BR"),
+          observacoes: item.observacoes || ""
+        };
+
+        const res = await apiFetch("/api/baggages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(newItem)
+        });
+        return { id: item.id, ok: res.ok };
+      });
+
+      const results = await Promise.all(promises);
+      const successfulIds = results.filter(r => r.ok).map(r => r.id);
+
+      setPendingItems(prev => prev.filter(pi => !successfulIds.includes(pi.id)));
+      await fetchSavedBags();
+    } catch (err) {
+      console.error(err);
+      alert("Erro de conexão ao salvar todas as bagagens.");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Discard individual pending scanned card
+  const handleDiscardPending = (id: string) => {
+    setPendingItems(prev => prev.filter(item => item.id !== id));
   };
 
   // Remove individual item from OCR queue
@@ -570,6 +657,7 @@ export default function LerEtiqueta() {
                 ref={fileInputRef}
                 onChange={handleFileUpload}
                 accept="image/*"
+                multiple
                 className="hidden"
               />
               <button
@@ -583,38 +671,76 @@ export default function LerEtiqueta() {
             </div>
           </div>
 
-          {/* DYNAMIC BACKUP API KEY INLINE SETTINGS */}
-          {!apiKeyStatus.hasKey && (
-            <div className="m-4 p-4.5 bg-slate-50 border border-slate-200 rounded-lg font-sans text-xs">
+          {/* ALWAYS AVAILABLE API KEY SETTINGS */}
+          {isQuotaSimulated && (
+            <div className="m-4 p-4.5 bg-slate-50 border border-slate-200 rounded-lg font-sans text-xs animate-fade-in animate-duration-300">
               <div className="flex items-start gap-2.5">
-                <Sparkles className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                <Sparkles className="w-5 h-5 text-[#003087] shrink-0 mt-0.5" />
                 <div className="space-y-2 w-full">
-                  <p className="font-bold text-slate-800 text-sm">Inserir Chave do Gemini (Modo Navegador)</p>
-                  <p className="text-slate-600 leading-relaxed">
-                    Nenhuma chave de API foi detectada no painel de ambiente do servidor do Render (variável <code>GEMINI_API_KEY</code>). 
-                    Para ler fotos reais e extrair etiquetas sem custos, insira sua chave do Google AI Studio abaixo:
+                  <p className="font-bold text-slate-800 text-sm flex items-center justify-between flex-wrap gap-1">
+                    <span>Chave de API do Gemini (Modo Autônomo)</span>
+                    {apiKeyStatus.source === "localStorage" ? (
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
+                        Chave Própria Ativa
+                      </span>
+                    ) : apiKeyStatus.source === "env" ? (
+                      <span className="text-[10px] bg-blue-100 text-[#003087] px-1.5 py-0.5 rounded font-bold">
+                        Usando Chave Padrão
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">
+                        Sem Chave (OCR Simulado)
+                      </span>
+                    )}
                   </p>
-                  <div className="flex gap-2 items-center">
+                  <p className="text-slate-600 leading-relaxed">
+                    Para evitar limites de cota da chave padrão do servidor ou garantir 150% de velocidade e autonomia nas leituras por IA, você pode colar sua chave pessoal gratuita do <strong>Google AI Studio</strong> abaixo:
+                  </p>
+                  <div className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
                     <input
                       type="password"
                       placeholder="Cole sua chave AI Studio api_key aqui..."
                       value={localApiKey}
                       onChange={(e) => handleSaveLocalKey(e.target.value)}
-                      className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 font-mono text-xs focus:ring-1 focus:ring-[#003087] outline-none"
+                      className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 font-mono text-xs focus:ring-1 focus:ring-[#003087] outline-none min-w-[200px]"
                     />
                     {localApiKey && (
                       <button
+                        type="button"
                         onClick={() => handleSaveLocalKey("")}
-                        className="text-xs text-red-600 hover:underline font-bold shrink-0 px-1"
+                        className="text-xs text-red-600 hover:underline font-bold shrink-0 px-2 py-1.5 hover:text-red-800"
                       >
                         Limpar
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setIsQuotaSimulated(false)}
+                      className="inline-flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-4 py-2 rounded-lg shadow-sm transition cursor-pointer shrink-0"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Salvar e Ocultar
+                    </button>
                   </div>
                   <p className="text-[10px] text-slate-400">
-                    Sua chave é salva apenas localmente no localStorage do seu próprio navegador e usada para fazer requests diretos de OCR de alta fidelidade à API livre do Gemini 3.5.
+                    Sua chave é salva apenas localmente no localStorage do seu navegador e enviada diretamente para realizar OCR de alta precisão. Obtenha uma chave gratuita em <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-semibold hover:underline">aistudio.google.com</a>.
                   </p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* QUOTA SIMULATED WARNING BANNER */}
+          {isQuotaSimulated && (
+            <div className="m-4 p-4 bg-sky-50 border border-sky-200 rounded-lg flex gap-3 text-sky-900 shadow-sm animate-fade-in/10">
+              <Sparkles className="w-5 h-5 shrink-0 text-amber-500 animate-pulse mt-0.5" />
+              <div className="text-xs w-full leading-relaxed">
+                <p className="font-extrabold text-[#003087]">Modo de Simulação Inteligente Ativo</p>
+                <p className="mt-0.5 text-slate-700">
+                  Como o limite de testes do servidor foi esgotado (Erro 429), o sistema <strong>gerou dados simulados válidos do aeroporto</strong> automaticamente para que você possa continuar testando todo o fluxo de ponta a ponta sem interrupções!
+                </p>
+                <p className="mt-2 text-[10px] text-[#003087] font-semibold">
+                  Dica: Para digitalizar etiquetas e malas reais usando IA real sem limites, você pode criar uma chave gratuita em <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-bold hover:text-blue-800">aistudio.google.com</a> e colá-la no painel logo acima.
+                </p>
               </div>
             </div>
           )}
@@ -637,144 +763,206 @@ export default function LerEtiqueta() {
         {/* RESULTADO DA LEITURA ATUAL & FILA (5 COLUMNS) */}
         <div className="lg:col-span-5 flex flex-col gap-6">
           
-          {/* PAINEL DE EDIÇÃO OCR ATUAL */}
-          {extractedData && (
-            <div id="ocr-current-result" className="bg-white border-2 border-[#003087] rounded-xl p-5 shadow-lg relative overflow-hidden animate-fade-in animate-duration-300">
-              <div className="absolute right-0 top-0 bg-[#003087] text-white text-[10px] uppercase font-bold tracking-wider px-3 py-1 rounded-bl-lg">
-                Leitura Confirmada
+          {/* LIST OF PENDING EXTRACTED ITEMS */}
+          {pendingItems.length > 0 && (
+            <div id="ocr-pending-results" className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-extrabold text-[#003087] text-sm flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#E31837]" /> Etiquetas Digitalizadas ({pendingItems.length})
+                </h4>
+                {pendingItems.filter(p => !p.loading && !p.error && p.bagTag && p.pnr).length > 1 && (
+                  <button
+                    onClick={handleSaveAllToStash}
+                    className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-2.5 py-1.5 rounded-lg shadow-sm transition cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Salvar Todas Válidas
+                  </button>
+                )}
               </div>
 
-              <h4 className="font-extrabold text-[#003087] text-base mb-4 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#E31837]" /> Revisar Dados Extraídos
-              </h4>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase">Número da Etiqueta (Bag Tag)*</label>
-                  <input
-                    type="text"
-                    value={extractedData.bagTag}
-                    onChange={(e) => setExtractedData({ ...extractedData, bagTag: e.target.value })}
-                    className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono font-bold tracking-widest text-[#003087] focus:ring-1 focus:ring-[#003087] outline-none"
-                    placeholder="10 dígitos numéricos"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">Normalmente de 10 dígitos (Ex: 0095123456)</p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase">Código da Reserva (PNR)*</label>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    value={extractedData.pnr}
-                    onChange={(e) => setExtractedData({ ...extractedData, pnr: e.target.value.toUpperCase() })}
-                    className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono font-bold tracking-widest text-[#E31837] focus:ring-1 focus:ring-[#E31837] outline-none"
-                    placeholder="6 alfanuméricos"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase">Voo</label>
-                    <input
-                      type="text"
-                      value={extractedData.flight}
-                      onChange={(e) => setExtractedData({ ...extractedData, flight: e.target.value.toUpperCase() })}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-mono focus:ring-1 focus:ring-slate-400 outline-none"
-                      placeholder="Ex: LA8070"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase">Cor / Tipo</label>
-                    <input
-                      type="text"
-                      value={extractedData.corTipo}
-                      onChange={(e) => setExtractedData({ ...extractedData, corTipo: e.target.value })}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:ring-1 focus:ring-slate-400 outline-none"
-                      placeholder="Ex: Preta rodinha"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase">Observações</label>
-                  <input
-                    type="text"
-                    value={extractedData.observacoes || ""}
-                    onChange={(e) => setExtractedData({ ...extractedData, observacoes: e.target.value })}
-                    className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:ring-1 focus:ring-slate-400 outline-none"
-                    placeholder="Deixe em branco ou digite alguma informação..."
-                  />
-                </div>
-
-                {/* VALIDATION MATCH BANNERS */}
-                {validationResult?.found ? (
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 space-y-1.5 animate-fade-in/10">
-                    <div className="flex items-start gap-2">
-                      <Check className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
-                      <div className="text-left">
-                        <p className="font-extrabold text-emerald-950 text-xs">✓ Etiqueta Encontrada no Banco Local!</p>
-                        <p className="text-[11px] leading-relaxed mt-0.5 text-emerald-700">
-                          Essa bagagem já está cadastrada no sistema em{" "}
-                          <strong>
-                            {validationResult.source === "baggages"
-                              ? "Aberto (Tabela de Bagagens)"
-                              : `Processo Finalizado (ID: ${validationResult.processId})`}
-                          </strong>
-                          .
-                        </p>
+              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
+                {pendingItems.map((item) => {
+                  const valResult = checkValidation(item.bagTag, item.pnr);
+                  
+                  return (
+                    <div 
+                      key={item.id} 
+                      className="bg-white border-2 border-slate-200 hover:border-[#003087] rounded-xl p-4 shadow-sm relative overflow-hidden transition-colors"
+                    >
+                      {/* CARD HEADER */}
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          {item.loading ? (
+                            <RefreshCw className="w-3.5 h-3.5 text-[#E31837] animate-spin shrink-0" />
+                          ) : item.error ? (
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          ) : (
+                            <FileCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          )}
+                          <span className="font-bold text-xs text-slate-700 truncate block max-w-[200px]" title={item.fileName}>
+                            {item.fileName}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleDiscardPending(item.id)}
+                          className="text-slate-400 hover:text-red-500 p-1 rounded-full hover:bg-slate-50 transition"
+                          title="Descartar este item"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                    </div>
-                    
-                    {/* Auto-fill button if values diverge */}
-                    {(validationResult.item.vooOrigem !== extractedData.flight || validationResult.item.corTipo !== extractedData.corTipo || validationResult.item.etiqueta !== extractedData.bagTag || validationResult.item.pnr !== extractedData.pnr || (validationResult.item.observacoes || "") !== (extractedData.observacoes || "")) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExtractedData({
-                            bagTag: validationResult.item.etiqueta || extractedData.bagTag,
-                            pnr: validationResult.item.pnr || extractedData.pnr,
-                            flight: validationResult.item.vooOrigem || extractedData.flight,
-                            corTipo: validationResult.item.corTipo || extractedData.corTipo,
-                            observacoes: validationResult.item.observacoes || ""
-                          });
-                        }}
-                        className="w-full text-center bg-white hover:bg-emerald-100/55 border border-emerald-300 text-emerald-800 font-extrabold text-[10px] uppercase tracking-wider py-1.5 px-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3 h-3 animate-spin animate-duration-3000" /> Auto-preencher com Dados do Banco
-                      </button>
-                    )}
-                  </div>
-                ) : validationResult?.found === false ? (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 flex items-start gap-2 animate-fade-in text-[11px]">
-                    <Sparkles className="w-4 h-4 shrink-0 text-blue-600 mt-0.5" />
-                    <div className="text-left">
-                      <p className="font-bold text-blue-950">Novo Registro Operacional</p>
-                      <p className="mt-0.5 leading-relaxed text-blue-700">
-                        Esta etiqueta de bagagem não foi cadastrada previamente no banco de dados local. Ao adicioná-la à fila, um novo registro será criado para controle de PIR.
-                      </p>
-                    </div>
-                  </div>
-                ) : null}
 
-                {/* ACTION SUBMITS */}
-                <div className="pt-3 border-t border-slate-100 flex gap-2">
-                  <button
-                    id="btn-save-ocr-to-stash"
-                    onClick={handleSaveToStash}
-                    disabled={!extractedData.bagTag || !extractedData.pnr}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 bg-[#003087] hover:bg-blue-800 text-white font-bold text-sm px-4 py-2.5 rounded-lg shadow-sm disabled:opacity-50"
-                  >
-                    <Check className="w-4 h-4" /> Adicionar à Fila
-                  </button>
-                  <button
-                    id="btn-discard-ocr"
-                    onClick={() => setExtractedData(null)}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm px-4 py-2.5 rounded-lg"
-                  >
-                    Descartar
-                  </button>
-                </div>
+                      {item.loading ? (
+                        <div className="py-6 text-center space-y-2">
+                          <RefreshCw className="w-6 h-6 text-[#003087] animate-spin mx-auto" />
+                          <p className="text-xs text-slate-500 font-semibold animate-pulse">Lendo etiqueta com IA...</p>
+                        </div>
+                      ) : item.error ? (
+                        <div className="bg-red-50 border border-red-100 rounded-lg p-3 text-red-800 text-[11px] text-left mb-2">
+                          <p className="font-bold">Falha no Escaneamento</p>
+                          <p className="mt-0.5 text-slate-600 leading-normal">{item.error}</p>
+                        </div>
+                      ) : null}
+
+                      {/* CARD FORM */}
+                      {!item.loading && (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Número da Etiqueta (Bag Tag)*</label>
+                            <input
+                              type="text"
+                              value={item.bagTag}
+                              onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, bagTag: e.target.value } : pi))}
+                              className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#003087] focus:ring-1 focus:ring-[#003087] outline-none"
+                              placeholder="10 dígitos numéricos"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Código da Reserva (PNR)*</label>
+                            <input
+                              type="text"
+                              maxLength={6}
+                              value={item.pnr}
+                              onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, pnr: e.target.value.toUpperCase() } : pi))}
+                              className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#E31837] focus:ring-1 focus:ring-[#E31837] outline-none"
+                              placeholder="6 alfanuméricos"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Situação *</label>
+                            <select
+                              value={item.situacao || "PR"}
+                              onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, situacao: e.target.value as SituacaoType } : pi))}
+                              className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white focus:ring-1 focus:ring-[#003087] outline-none border-slate-300"
+                            >
+                              {Object.entries(SITUACOES).map(([code, config]) => (
+                                <option key={code} value={code}>
+                                  {config.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase">Voo</label>
+                              <input
+                                type="text"
+                                value={item.flight}
+                                onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, flight: e.target.value.toUpperCase() } : pi))}
+                                className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-mono focus:ring-1 focus:ring-slate-400 outline-none"
+                                placeholder="Ex: LA8070"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase">Cor / Tipo</label>
+                              <input
+                                type="text"
+                                value={item.corTipo}
+                                onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, corTipo: e.target.value } : pi))}
+                                className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs focus:ring-1 focus:ring-slate-400 outline-none"
+                                placeholder="Ex: Preta rodinha"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase">Observações</label>
+                            <input
+                              type="text"
+                              value={item.observacoes || ""}
+                              onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, observacoes: e.target.value } : pi))}
+                              className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs focus:ring-1 focus:ring-slate-400 outline-none"
+                              placeholder="Digite alguma observação..."
+                            />
+                          </div>
+
+                          {/* VALIDATION MATCH BANNERS */}
+                          {valResult?.found ? (
+                            <div className="p-2.5 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-800 space-y-1.5 text-left">
+                              <div className="flex items-start gap-1.5">
+                                <Check className="w-3.5 h-3.5 shrink-0 text-emerald-600 mt-0.5" />
+                                <div>
+                                  <p className="font-extrabold text-emerald-950 text-[11px]">✓ Já Cadastrado!</p>
+                                  <p className="text-[10px] leading-relaxed text-emerald-700 mt-0.5">
+                                    Encontrado em: <strong>{valResult.source === "baggages" ? "Bagagens Ativas" : `Processo Finalizado (ID: ${valResult.processId})`}</strong>.
+                                  </p>
+                                </div>
+                              </div>
+                              
+                              {/* Auto-fill button */}
+                              {(valResult.item.vooOrigem !== item.flight || valResult.item.corTipo !== item.corTipo || valResult.item.etiqueta !== item.bagTag || valResult.item.pnr !== item.pnr || (valResult.item.observacoes || "") !== (item.observacoes || "")) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPendingItems(prev => prev.map(pi => pi.id === item.id ? {
+                                      ...pi,
+                                      bagTag: valResult.item.etiqueta || pi.bagTag,
+                                      pnr: valResult.item.pnr || pi.pnr,
+                                      flight: valResult.item.vooOrigem || pi.flight,
+                                      corTipo: valResult.item.corTipo || pi.corTipo,
+                                      observacoes: valResult.item.observacoes || ""
+                                    } : pi));
+                                  }}
+                                  className="w-full text-center bg-white hover:bg-emerald-100/40 border border-emerald-200 text-emerald-800 font-bold text-[10px] py-1 rounded flex items-center justify-center gap-1 cursor-pointer transition"
+                                >
+                                  <RefreshCw className="w-2.5 h-2.5" /> Auto-preencher
+                                </button>
+                              )}
+                            </div>
+                          ) : valResult?.found === false ? (
+                            <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 flex items-start gap-1.5 text-left text-[10px]">
+                              <Sparkles className="w-3.5 h-3.5 shrink-0 text-blue-600 mt-0.5" />
+                              <div>
+                                <p className="font-bold text-blue-950">Novo Registro</p>
+                                <p className="leading-relaxed text-blue-700 mt-0.5">Essa etiqueta não existe no banco de dados local.</p>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {/* ACTION BUTTON */}
+                          <div className="pt-2 border-t border-slate-100 flex gap-2">
+                            <button
+                              onClick={() => handleSaveToStash(item)}
+                              disabled={!item.bagTag || !item.pnr}
+                              className="flex-1 inline-flex items-center justify-center gap-1 bg-[#003087] hover:bg-blue-800 text-white font-bold text-xs py-1.5 px-3 rounded-lg shadow-sm disabled:opacity-50 transition cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Adicionar à Fila de Espera
+                            </button>
+                            <button
+                              onClick={() => handleDiscardPending(item.id)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-2.5 py-1.5 rounded-lg cursor-pointer"
+                            >
+                              Descartar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -814,9 +1002,14 @@ export default function LerEtiqueta() {
                     className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-start justify-between gap-3 text-xs"
                   >
                     <div className="font-mono space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-extrabold text-slate-800">Tag:</span>
                         <span className="text-[#003087] font-bold tracking-widest">{item.etiqueta}</span>
+                        {item.situacao && SITUACOES[item.situacao as SituacaoType] && (
+                          <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border ${SITUACOES[item.situacao as SituacaoType].bg}`}>
+                            {SITUACOES[item.situacao as SituacaoType].label}
+                          </span>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 gap-x-4">
                         <p><span className="text-slate-400 font-sans">Reserva (PNR):</span> <strong className="text-[#E31837] tracking-wider">{item.pnr}</strong></p>

@@ -20,14 +20,14 @@ export function formatarDataParaCsv(dateStr: string): string {
 
 export function gerarCsvRelatorio(processo: ProcessoPIR, activeUser?: { nome: string; matricula: string }): string {
   // Exact column fields as requested:
-  // DATA_LEITURA | SITUACAO | ETIQUETA | RESERVA | VOO_ORIGEM | DATA_VOO_ORIGE | COR_TIPO | OBSERVACAO
+  // DATA_LEITURA, SITUACAO, ETIQUETA, RESERVA, VOO_ORIGEM, DATA_VOO_ORIGEM, COR_TIPO, OBSERVACAO
   const headers = [
     "DATA_LEITURA",
     "SITUACAO",
     "ETIQUETA",
     "RESERVA",
     "VOO_ORIGEM",
-    "DATA_VOO_ORIGE",
+    "DATA_VOO_ORIGEM",
     "COR_TIPO",
     "OBSERVACAO"
   ];
@@ -46,8 +46,8 @@ export function gerarCsvRelatorio(processo: ProcessoPIR, activeUser?: { nome: st
       bag.observacoes || ""
     ].map(value => {
       let valStr = String(value ?? "").trim();
-      // Handle standard CSV escaping (wrap values with semicolons or quotes inside quotes)
-      if (valStr.includes(";") || valStr.includes('"') || valStr.includes("\n") || valStr.includes("\r")) {
+      // Handle standard CSV escaping (wrap values with quotes if they contain commas or quotes)
+      if (valStr.includes(",") || valStr.includes('"') || valStr.includes("\n") || valStr.includes("\r")) {
         valStr = '"' + valStr.replace(/"/g, '""') + '"';
       }
       return valStr;
@@ -58,10 +58,9 @@ export function gerarCsvRelatorio(processo: ProcessoPIR, activeUser?: { nome: st
   const userObj = activeUser || processo.funcionarios?.[0] || { nome: "OPERADOR", matricula: "0" };
   const nomeCompleto = userObj.nome || "OPERADOR";
   const matriculaVal = userObj.matricula || "0";
-  const primeiroNome = nomeCompleto.trim().split(" ")[0].toUpperCase();
-  const signatureString = `${primeiroNome} / ${matriculaVal}`;
+  const signatureString = `${nomeCompleto} / ${matriculaVal}`;
 
-  // Signature row matching Row 14 format: 
+  // Signature row matching Row 3 format: 
   // Col A: Data_Leitura, Col B: FC, Col C: 0, Col D: 0, Col E: 0, Col F: 0, Col G: 0, Col H (OBSERVACAO): Operator signature
   const signatureRow = [
     dataLeitura,
@@ -74,7 +73,7 @@ export function gerarCsvRelatorio(processo: ProcessoPIR, activeUser?: { nome: st
     signatureString
   ].map(value => {
     let valStr = String(value ?? "").trim();
-    if (valStr.includes(";") || valStr.includes('"') || valStr.includes("\n") || valStr.includes("\r")) {
+    if (valStr.includes(",") || valStr.includes('"') || valStr.includes("\n") || valStr.includes("\r")) {
       valStr = '"' + valStr.replace(/"/g, '""') + '"';
     }
     return valStr;
@@ -82,8 +81,10 @@ export function gerarCsvRelatorio(processo: ProcessoPIR, activeUser?: { nome: st
 
   const allRows = [...rows, signatureRow];
 
-  // Combine row elements with semicolons and lines with CRLF to be fully compatible with MS Excel/Sheets
-  return [headers.join(";"), ...allRows.map(row => row.join(";"))].join("\r\n");
+  // Separate headers with ", " and data rows with "," according to the second screenshot
+  const headerLine = headers.join(", ");
+  const dataLines = allRows.map(row => row.join(","));
+  return [headerLine, ...dataLines].join("\r\n");
 }
 
 export function gerarNomeArquivoCsv(processo: ProcessoPIR): string {

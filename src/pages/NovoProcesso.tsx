@@ -47,6 +47,24 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   const [generatedCsvFilename, setGeneratedCsvFilename] = useState("");
   const [successInfo, setSuccessInfo] = useState<any>(null);
   const [copied, setCopied] = useState(false);
+  const [activePreviewTab, setActivePreviewTab] = useState<'email' | 'csv'>('email');
+
+  // Modal active interactive editor states
+  const [modalFuncionarios, setModalFuncionarios] = useState<Funcionario[]>([]);
+  const [modalBagagens, setModalBagagens] = useState<Bagagem[]>([]);
+  const [isAddingFunc, setIsAddingFunc] = useState(false);
+  const [isAddingBag, setIsAddingBag] = useState(false);
+  const [newFuncNome, setNewFuncNome] = useState("");
+  const [newFuncMatricula, setNewFuncMatricula] = useState("");
+  const [newBagSub, setNewBagSub] = useState<any>({
+    situacao: "PR",
+    etiqueta: "",
+    pnr: "",
+    vooOrigem: "",
+    dataVoo: new Date().toLocaleDateString("pt-BR"),
+    corTipo: "",
+    observacoes: ""
+  });
 
   // Sync with central database
   const fetchBaggages = async () => {
@@ -220,11 +238,18 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       
       // Update local states for presentation
       setSuccessInfo(savedData);
+      setModalFuncionarios(savedData.funcionarios || mockProcess.funcionarios || []);
+      setModalBagagens(savedData.bagagens || mockProcess.bagagens || []);
+      setIsAddingFunc(false);
+      setIsAddingBag(false);
+      setNewFuncNome("");
+      setNewFuncMatricula("");
       setGeneratedHtml(compiledHtml);
       setGeneratedCsv(compiledCsv);
       setGeneratedCsvFilename(csvFilename);
       setModalOpen(true);
       setCopied(false);
+      setActivePreviewTab('email');
 
       // Automatically trigger CSV file download instantly so it is already generated and downloaded
       try {
@@ -281,6 +306,53 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
     } catch (err) {
       console.error("Erro ao baixar CSV:", err);
     }
+  };
+
+  // Updates local states and regenerates compiled HTML and CSV in real-time
+  const handleUpdateModalData = (updatedFuncs: Funcionario[], updatedBags: Bagagem[]) => {
+    setModalFuncionarios(updatedFuncs);
+    setModalBagagens(updatedBags);
+
+    // Recompile mock process using the updated fields (for preview / output sync)
+    const updatedProcess = {
+      ...successInfo,
+      companhiaAerea: successInfo?.companhiaAerea || companhiaAerea,
+      funcionarios: updatedFuncs,
+      bagagens: updatedBags,
+      createdAt: successInfo?.createdAt || new Date().toISOString()
+    };
+
+    // Compile new HTML & CSV
+    const newHtml = gerarHtmlEmail(updatedProcess);
+    const newCsv = gerarCsvRelatorio(updatedProcess, updatedFuncs[0] || activeUser);
+    
+    setGeneratedHtml(newHtml);
+    setGeneratedCsv(newCsv);
+  };
+
+  const handleModalGenerateAndDownload = () => {
+    // Generate latest content based on currently state lists
+    const updatedProcess = {
+      ...successInfo,
+      companhiaAerea: successInfo?.companhiaAerea || companhiaAerea,
+      funcionarios: modalFuncionarios,
+      bagagens: modalBagagens,
+      createdAt: successInfo?.createdAt || new Date().toISOString()
+    };
+
+    const newCsv = gerarCsvRelatorio(updatedProcess, modalFuncionarios[0] || activeUser);
+    const newFilename = gerarNomeArquivoCsv(updatedProcess);
+
+    setGeneratedCsv(newCsv);
+    setGeneratedCsvFilename(newFilename);
+
+    handleDownloadCsv(newCsv, newFilename);
+  };
+
+  const handleModalClear = () => {
+    handleUpdateModalData([], []);
+    setIsAddingFunc(false);
+    setIsAddingBag(false);
   };
 
   // Reset/Archive active list completely
@@ -633,31 +705,31 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
               </button>
             </div>
 
-            {/* MODAL CONTENT CONTAINER */}
-            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+            {/* MODAL CONTENT CONTAINER - Soft elegant off-white background representing the print preview environment */}
+            <div className="flex-1 p-6 bg-[#eaeaea] overflow-y-auto flex flex-col items-stretch justify-start min-h-[500px] space-y-6">
               
               {/* SUCCESS MESSAGE */}
-              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-emerald-800 flex gap-3 text-xs">
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-emerald-800 flex gap-3 text-xs w-full">
                 <div className="bg-emerald-500 rounded-full p-1 text-white shrink-0 self-start">
                   <Check className="w-3.5 h-3.5" />
                 </div>
-                <div>
+                <div className="text-left w-full">
                   <p className="font-bold text-sm">Salvo com sucesso e Baixado Automaticamente!</p>
-                  <p className="mt-1 text-slate-600">
+                  <p className="mt-1 text-slate-600 font-medium">
                     O arquivo de planilha <strong className="font-mono text-emerald-900 bg-emerald-100 px-1 py-0.5 rounded">{generatedCsvFilename}</strong> já foi gerado e o download iniciou automaticamente no seu navegador.
                   </p>
                 </div>
               </div>
 
               {/* ACTION BUTTONS & INFO PANEL */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
+              <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-5 space-y-4 w-full text-left">
                 <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
                   <div>
                     <span className="text-xs font-extrabold text-slate-700 uppercase block">Envio Operacional GRU / Receita:</span>
                     <p className="text-[11px] text-slate-500 mt-1">Clique no botão abaixo para abrir o Gmail pré-preenchido e apenas anexe o arquivo CSV recém-baixado.</p>
                   </div>
                   
-                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                  <div className="flex flex-wrap gap-2 w-full md:w-auto shrink-0">
                     {/* DOWNLOAD AGAIN BUTTON */}
                     <button
                       type="button"
@@ -714,9 +786,9 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                 {/* HELPFUL STEP-BY-STEP DOCK */}
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3 items-start">
                   <div className="p-2 bg-blue-100 text-blue-800 rounded-lg text-sm select-none shrink-0 font-bold">💡</div>
-                  <div className="text-[11.5px] text-slate-700 space-y-1.5 leading-relaxed">
+                  <div className="text-[11px] text-slate-700 space-y-1.5 leading-relaxed font-sans">
                     <p className="font-extrabold uppercase text-[10px] tracking-wide text-[#003087]">Como enviar o e-mail de imediato:</p>
-                    <ol className="list-decimal pl-4 space-y-1">
+                    <ol className="list-decimal pl-4 space-y-1 font-medium">
                       <li>O navegador já baixou a planilha <strong className="text-slate-900">{generatedCsvFilename}</strong> automaticamente na sua pasta de Downloads.</li>
                       <li>Clique no botão vermelho <strong className="text-[#E31837]">"Enviar Relatório no Gmail App"</strong> acima. Uma nova aba do Gmail se abrirá com o destinatário correto, assunto e mensagem preenchidos de forma padrão.</li>
                       <li>Na aba do Gmail aberta, basta <strong>arrastar e soltar (drag and drop) o arquivo CSV baixado</strong> ou clicar no ícone de anexo para concluir o envio oficial.</li>
@@ -725,36 +797,411 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                 </div>
               </div>
 
-              {/* SPREADSHEET DECORATED SECTION */}
-              <div>
-                <label className="block text-xs font-black text-slate-500 uppercase mb-2 tracking-wider">
-                  Visualização Prévia do Arquivo Gerado (Identico à Planilha Excel/Sheets)
-                </label>
+              {/* TABS CONTROLLER */}
+              <div className="border-b border-slate-200 w-full text-left">
+                <div className="flex gap-4 -mb-px">
+                  <button
+                    type="button"
+                    onClick={() => setActivePreviewTab('email')}
+                    className={`pb-3 px-2 font-bold text-xs uppercase tracking-wider border-b-2 transition-all focus:outline-none cursor-pointer ${
+                      activePreviewTab === 'email'
+                        ? "border-[#003087] text-[#003087]"
+                        : "border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    💌 E-mail Oficial (Tela Azul da Receita)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePreviewTab('csv')}
+                    className={`pb-3 px-2 font-bold text-xs uppercase tracking-wider border-b-2 transition-all focus:outline-none cursor-pointer ${
+                      activePreviewTab === 'csv'
+                        ? "border-[#003087] text-[#003087]"
+                        : "border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    📊 Excel / Planilha de Sobras (CSV)
+                  </button>
+                </div>
+              </div>
 
-                {/* GOOGLE SPREADSHEET LAYOUT FRAMEWORK */}
-                <div className="border border-slate-300 rounded-xl overflow-hidden shadow-md bg-[#202124] flex flex-col">
+              {/* ACTIVE TAB VIEW WRAPPER */}
+              <div className="w-full flex justify-center">
+                {activePreviewTab === 'email' ? (
+                <div className="w-full max-w-4xl bg-[#003B70] text-white shadow-2xl flex flex-col text-left font-sans animate-fade-in border border-white/10">
                   
-                  {/* Google Sheets Header bar */}
-                  <div className="bg-[#202124] px-4 py-3 flex items-center justify-between border-b border-[#3c4043] text-sm text-white">
+                  {/* Outer Frame Title Bar */}
+                  <div className="bg-[#002f63] px-5 py-3 flex items-center justify-between border-b border-[#00254f] select-none shrink-0">
+                    <span className="font-sans font-extrabold text-[11px] tracking-wider text-white">
+                      FORMULÁRIO OFICIAL — RECEITA FEDERAL DO BRASIL
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActivePreviewTab('csv')}
+                      className="bg-[#204a80] hover:bg-[#2b5d9c] text-white font-bold text-[10px] uppercase px-3 py-1 bg-slate-500 rounded-sm border border-white/20 tracking-wider transition-all cursor-pointer font-sans"
+                    >
+                      PREVIEW HTML
+                    </button>
+                  </div>
+                  
+                  {/* Blue form body */}
+                  <div className="p-8 space-y-6">
+                    
+                    {/* Companhia Aérea */}
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-white select-none">Companhia Aérea:</span>
+                      <select 
+                        value={companhiaAerea} 
+                        onChange={(e) => setCompanhiaAerea(e.target.value)}
+                        className="bg-white text-black font-extrabold text-xs px-2 py-1.5 w-48 rounded-none border border-slate-300 outline-none focus:ring-1 focus:ring-blue-500 font-sans"
+                      >
+                        <option value="LATAM Airlines">LATAM Airlines</option>
+                        <option value="TAM Linhas Aéreas">TAM Linhas Aéreas</option>
+                        <option value="LATAM CARGO">LATAM Cargo</option>
+                        <option value="LATAM GRU">LATAM GRU</option>
+                      </select>
+                    </div>
+
+                    <p className="text-xs font-bold text-white select-none leading-relaxed">
+                      Informar abaixo os funcionários que acompanharão as bagagens até a Alfândega:
+                    </p>
+
+                    {/* Companion Employees table list */}
+                    <div className="max-w-xl">
+                      <div className="grid grid-cols-2 text-xs font-bold text-blue-200 border-b border-white/25 pb-1 select-none">
+                        <div>Nome</div>
+                        <div>Matrícula GRU</div>
+                      </div>
+                      <div className="divide-y divide-white/10 mt-1 max-h-[160px] overflow-y-auto">
+                        {modalFuncionarios.map((f, i) => (
+                          <div key={i} className="grid grid-cols-2 text-xs py-2 font-bold text-white group items-center">
+                            <div>{f.nome}</div>
+                            <div className="flex justify-between items-center pr-2 font-mono">
+                              <span>{f.matricula}</span>
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const filtered = modalFuncionarios.filter((_, idx) => idx !== i);
+                                  handleUpdateModalData(filtered, modalBagagens);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-rose-300 hover:text-rose-500 font-bold transition text-[9px] cursor-pointer bg-black/30 border border-white/10 px-1.5 py-0.5 rounded"
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {modalFuncionarios.length === 0 && (
+                          <div className="py-3 text-xs italic text-blue-200/50">Nenhum funcionário adicionado.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Inline operator input form */}
+                    {isAddingFunc ? (
+                      <div className="bg-black/25 p-4 border border-white/20 mt-2 flex flex-col sm:flex-row gap-3 items-end text-white rounded max-w-xl animate-fade-in">
+                        <div className="flex-1 w-full text-left">
+                          <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Nome Completo</label>
+                          <input 
+                            type="text" 
+                            value={newFuncNome}
+                            onChange={(e) => setNewFuncNome(e.target.value)}
+                            placeholder="Nome..."
+                            className="w-full bg-white text-black font-extrabold text-xs px-2.5 py-1.5 outline-none rounded-none border border-slate-300"
+                          />
+                        </div>
+                        <div className="w-full sm:w-40 text-left">
+                          <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Matrícula</label>
+                          <input 
+                            type="text" 
+                            value={newFuncMatricula}
+                            onChange={(e) => setNewFuncMatricula(e.target.value)}
+                            placeholder="Matrícula..."
+                            className="w-full bg-white text-black font-extrabold text-xs px-2.5 py-1.5 font-mono outline-none rounded-none border border-slate-300"
+                          />
+                        </div>
+                        <div className="flex gap-2 w-full sm:w-auto shrink-0 justify-end md:justify-start">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!newFuncNome.trim() || !newFuncMatricula.trim()) {
+                                alert("Por favor, preencha o Nome e a Matrícula do funcionário.");
+                                return;
+                              }
+                              const updated = [...modalFuncionarios, { nome: newFuncNome.trim(), matricula: newFuncMatricula.trim() }];
+                              handleUpdateModalData(updated, modalBagagens);
+                              setIsAddingFunc(false);
+                              setNewFuncNome("");
+                              setNewFuncMatricula("");
+                            }}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-xs transition cursor-pointer"
+                          >
+                            Confirmar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingFunc(false)}
+                            className="bg-slate-600 hover:bg-slate-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-xs transition cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          setIsAddingFunc(true);
+                          setIsAddingBag(false);
+                        }}
+                        className="bg-white text-slate-900 font-extrabold text-[12px] px-3.5 py-1.5 shadow-sm border border-slate-300 hover:bg-slate-50 transition cursor-pointer rounded-xs"
+                      >
+                        Adicionar Funcionário
+                      </button>
+                    )}
+
+                    {/* Fieldset Bagagens */}
+                    <fieldset className="border border-white/30 p-5 rounded-none relative text-left w-full mt-4 bg-transparent">
+                      <legend className="px-2 font-black text-xs text-white bg-[#003B70] leading-none select-none">
+                        Bagagens
+                      </legend>
+                      
+                      <div className="overflow-x-auto w-full">
+                        <table className="w-full text-left border-collapse mb-1">
+                          <thead>
+                            <tr className="border-b border-white/20 text-[11px] font-bold text-blue-200 select-none">
+                              <th className="py-2 px-1 text-xs">Situação</th>
+                              <th className="py-2 px-1 text-xs">Etiqueta</th>
+                              <th className="py-2 px-1 text-xs">Reserva</th>
+                              <th className="py-2 px-1 text-xs">Voo de Origem</th>
+                              <th className="py-2 px-1 text-xs">Data do Voo</th>
+                              <th className="py-2 px-1 text-xs">Cor e Tipo</th>
+                              <th className="py-2 px-1 text-xs">Observação</th>
+                              <th className="py-2 px-1 text-right w-12"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 text-xs font-bold text-white">
+                            {modalBagagens.map((b, i) => (
+                              <tr key={i} className="hover:bg-white/5 transition">
+                                <td className="py-2 px-1 text-slate-100 font-sans">
+                                  {SITUACOES[b.situacao as SituacaoType]?.label || b.situacao}
+                                </td>
+                                <td className="py-2 px-1 font-mono tracking-wider text-white">
+                                  {b.etiqueta || "-"}
+                                </td>
+                                <td className="py-2 px-1 font-mono text-indigo-100">
+                                  {b.pnr || "-"}
+                                </td>
+                                <td className="py-2 px-1 text-white">
+                                  {b.vooOrigem || "-"}
+                                </td>
+                                <td className="py-2 px-1 text-slate-200 font-sans">
+                                  {b.dataVoo || "-"}
+                                </td>
+                                <td className="py-2 px-1 text-slate-200">
+                                  {b.corTipo || "-"}
+                                </td>
+                                <td className="py-2 px-1 text-slate-300 font-medium font-sans max-w-xs truncate" title={b.observacoes}>
+                                  {b.observacoes || "-"}
+                                </td>
+                                <td className="py-2 px-1 text-right">
+                                  <button 
+                                    type="button"
+                                    onClick={() => {
+                                      const filtered = modalBagagens.filter((_, idx) => idx !== i);
+                                      handleUpdateModalData(modalFuncionarios, filtered);
+                                    }}
+                                    className="text-white/60 hover:text-rose-400 font-bold transition text-[10px] cursor-pointer bg-black/25 hover:bg-black/40 px-2 py-0.5 rounded border border-white/5"
+                                  >
+                                    Remover
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                            {modalBagagens.length === 0 && (
+                              <tr>
+                                <td colSpan={8} className="py-4 text-center text-xs text-blue-200/50 italic font-medium">
+                                  Nenhuma bagagem incluída.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Inline bag addition form block inside fieldset */}
+                      {isAddingBag ? (
+                        <div className="bg-black/25 p-4 border border-white/20 mt-4 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs animate-fade-in text-white rounded">
+                          <div className="text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Situação</label>
+                            <select 
+                              value={newBagSub.situacao}
+                              onChange={(e) => setNewBagSub({...newBagSub, situacao: e.target.value})}
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 outline-none font-sans"
+                            >
+                              {Object.entries(SITUACOES).map(([k, v]) => (
+                                <option key={k} value={k} className="text-black font-bold">
+                                  {v.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Etiqueta (10 dígitos)</label>
+                            <input 
+                              type="text" 
+                              maxLength={10}
+                              value={newBagSub.etiqueta}
+                              onChange={(e) => setNewBagSub({...newBagSub, etiqueta: e.target.value.replace(/\D/g, "")})}
+                              placeholder="Ex: 0045202956"
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 font-mono outline-none"
+                            />
+                          </div>
+                          <div className="text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Reserva PNR (6 caracteres)</label>
+                            <input 
+                              type="text" 
+                              maxLength={6}
+                              value={newBagSub.pnr}
+                              onChange={(e) => setNewBagSub({...newBagSub, pnr: e.target.value.toUpperCase()})}
+                              placeholder="Ex: DCDVNP"
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 font-mono outline-none"
+                            />
+                          </div>
+                          <div className="text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Voo de Origem</label>
+                            <input 
+                              type="text" 
+                              value={newBagSub.vooOrigem}
+                              onChange={(e) => setNewBagSub({...newBagSub, vooOrigem: e.target.value.toUpperCase()})}
+                              placeholder="Ex: LA3553"
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 outline-none"
+                            />
+                          </div>
+                          <div className="text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Data do Voo</label>
+                            <input 
+                              type="text" 
+                              value={newBagSub.dataVoo}
+                              onChange={(e) => setNewBagSub({...newBagSub, dataVoo: e.target.value})}
+                              placeholder="Ex: 13/06/2026"
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 outline-none"
+                            />
+                          </div>
+                          <div className="text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Cor e Tipo</label>
+                            <input 
+                              type="text" 
+                              value={newBagSub.corTipo}
+                              onChange={(e) => setNewBagSub({...newBagSub, corTipo: e.target.value})}
+                              placeholder="Ex: Preta rígida"
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 outline-none"
+                            />
+                          </div>
+                          <div className="col-span-1 sm:col-span-2 text-left">
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Observação</label>
+                            <input 
+                              type="text" 
+                              value={newBagSub.observacoes}
+                              onChange={(e) => setNewBagSub({...newBagSub, observacoes: e.target.value})}
+                              placeholder="Ex: Mala riscada"
+                              className="w-full bg-white text-black font-extrabold text-xs p-1.5 outline-none font-sans"
+                            />
+                          </div>
+                          <div className="col-span-1 sm:col-span-4 flex justify-end gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!newBagSub.etiqueta || !newBagSub.pnr || !newBagSub.vooOrigem) {
+                                  alert("Por favor, preencha os campos obrigatórios (Etiqueta, Reserva e Voo).");
+                                  return;
+                                }
+                                const updated = [...modalBagagens, { ...newBagSub, id: "temp_bag_" + Date.now() }];
+                                handleUpdateModalData(modalFuncionarios, updated);
+                                setIsAddingBag(false);
+                                setNewBagSub({
+                                  situacao: "PR",
+                                  etiqueta: "",
+                                  pnr: "",
+                                  vooOrigem: "",
+                                  dataVoo: new Date().toLocaleDateString("pt-BR"),
+                                  corTipo: "",
+                                  observacoes: ""
+                                });
+                              }}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 cursor-pointer transition rounded-xs"
+                            >
+                              Salvar Bagagem
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsAddingBag(false)}
+                              className="bg-slate-600 hover:bg-slate-700 text-white font-bold text-xs px-4 py-2 cursor-pointer transition rounded-xs"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            setIsAddingBag(true);
+                            setIsAddingFunc(false);
+                          }}
+                          className="mt-3 bg-white text-slate-900 font-extrabold text-[12px] px-3.5 py-1.5 shadow-sm border border-slate-300 hover:bg-slate-50 transition cursor-pointer rounded-xs"
+                        >
+                          Adicionar Bagagem
+                        </button>
+                      )}
+                    </fieldset>
+
+                    {/* Operational Action Buttons alignment exactly like first print screen */}
+                    <div className="pt-4 flex flex-col gap-3 text-left w-full max-w-xs select-none">
+                      <button 
+                        type="button"
+                        onClick={handleModalGenerateAndDownload}
+                        className="bg-white text-slate-950 font-extrabold text-[12px] px-4 py-2.5 shadow-xs border border-slate-300 hover:bg-slate-50 transition-all cursor-pointer text-left w-full rounded-sm"
+                      >
+                        Gerar arquivo para envio
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={handleModalClear}
+                        className="bg-white text-slate-950 font-extrabold text-[12px] px-6 py-2 shadow-xs border border-slate-300 hover:bg-[#eaeaea] transition-all cursor-pointer text-center w-24 rounded-sm"
+                      >
+                        Limpar
+                      </button>
+                    </div>
+
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full max-w-4xl bg-white border border-slate-300 rounded-xl overflow-hidden shadow-2xl flex flex-col animate-fade-in text-left">
+                  
+                  {/* Fake spreadsheet application bar */}
+                  <div className="bg-[#2a2c2e] px-4 py-3 flex items-center justify-between border-b border-[#3c4043] text-sm text-white font-sans shrink-0 select-none">
                     <div className="flex items-center gap-2.5">
-                      {/* Grid Spreadsheet icon */}
-                      <div className="w-5 h-5 bg-[#107c41] rounded flex items-center justify-center text-[10px] font-black font-sans leading-none select-none text-white">
+                      <div className="w-5 h-5 bg-[#107c41] rounded flex items-center justify-center text-[10px] font-black leading-none select-none text-white">
                         X
                       </div>
                       <span className="font-mono text-xs font-bold text-gray-200 tracking-wide select-all">
                         {generatedCsvFilename || "sobras_latam.csv"}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-400 font-mono bg-white/5 px-2 py-0.5 rounded border border-white/10 select-none">
-                      CSV UTF-8
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActivePreviewTab('email')}
+                      className="bg-[#204a80] hover:bg-[#2b5d9c] text-white text-[10px] font-extrabold uppercase px-3 py-1.5 rounded transition tracking-wider border border-white/10"
+                    >
+                      PREVIEW HTML
+                    </button>
                   </div>
 
-                  {/* Operational Spreadsheet container */}
-                  <div className="overflow-x-auto max-w-full bg-white">
-                    <table className="w-full text-left border-collapse text-xs select-text font-mono">
+                  {/* Operation spreadsheet view */}
+                  <div className="overflow-x-auto max-w-full bg-white select-text">
+                    <table className="w-full text-left border-collapse text-xs font-mono">
                       <thead>
-                        {/* Alphabetical Header Row */}
                         <tr className="bg-[#f8f9fa] border-b border-[#dadce0] text-[#5f6368] text-center text-[10px] divide-x divide-[#dadce0]">
                           <th className="w-10 bg-[#f8f9fa] font-normal leading-none py-1 border-r border-[#dadce0]"></th>
                           <th className="w-32 py-1 select-none font-bold">A</th>
@@ -766,8 +1213,6 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                           <th className="w-36 py-1 select-none font-bold">G</th>
                           <th className="w-56 py-1 select-none font-bold">H</th>
                         </tr>
-
-                        {/* Column Titles Row (Row #1 in target sheet view) */}
                         <tr className="bg-white border-b border-[#dadce0] text-slate-900 font-extrabold text-[11px] divide-x divide-[#dadce0]">
                           <td className="bg-[#f8f9fa] text-[#5f6368] font-normal text-center select-none py-2 border-r border-[#dadce0]">1</td>
                           <td className="px-3 py-2 bg-slate-50">DATA_LEITURA</td>
@@ -775,17 +1220,16 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                           <td className="px-3 py-2 bg-slate-50">ETIQUETA</td>
                           <td className="px-3 py-2 bg-slate-50">RESERVA</td>
                           <td className="px-3 py-2 bg-slate-50">VOO_ORIGEM</td>
-                          <td className="px-3 py-2 bg-slate-50">DATA_VOO_ORIGE</td>
+                          <td className="px-3 py-2 bg-slate-50">DATA_VOO_ORIGEM</td>
                           <td className="px-3 py-2 bg-slate-50">COR_TIPO</td>
                           <td className="px-3 py-2 bg-slate-50">OBSERVACAO</td>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#dadce0]">
-                        {/* Data Rows mapped from chosen list items */}
-                        {(successInfo?.bagagens || bagagens.filter(b => selectedBagIds.includes(b.id))).map((bag: Bagagem, index: number) => {
-                          const rowNum = index + 2; // Rows starts at 2 after header
+                        {modalBagagens.map((bag: Bagagem, index: number) => {
+                          const rowNum = index + 2;
                           return (
-                            <tr key={bag.id} className="hover:bg-blue-50/40 text-slate-800 text-[11px] divide-x divide-[#dadce0] transition">
+                            <tr key={bag.id || index} className="hover:bg-blue-50/40 text-slate-800 text-[11px] divide-x divide-[#dadce0] transition">
                               <td className="bg-[#f8f9fa] text-[#5f6368] font-normal text-center select-none py-2 border-r border-[#dadce0] font-sans font-medium text-[10px] w-10 sticky left-0 z-10">
                                 {rowNum}
                               </td>
@@ -793,14 +1237,12 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                                 {formatarDataParaCsv(successInfo?.createdAt || new Date().toISOString())}
                               </td>
                               <td className="px-3 py-2 text-center font-bold font-sans">
-                                <span className="inline-block outline-hidden">
-                                  {bag.situacao}
-                                </span>
+                                {bag.situacao}
                               </td>
-                              <td className="px-3 py-2 font-mono font-medium tracking-wide text-slate-900 select-all">
+                              <td className="px-3 py-2 font-mono font-medium tracking-wide text-slate-900">
                                 {bag.etiqueta || "-"}
                               </td>
-                              <td className="px-3 py-2 font-mono font-bold text-indigo-700 select-all">
+                              <td className="px-3 py-2 font-mono font-bold text-indigo-700">
                                 {bag.pnr || "-"}
                               </td>
                               <td className="px-3 py-2 font-sans font-semibold text-[#003087]">
@@ -819,16 +1261,15 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                           );
                         })}
 
-                        {/* Signature Row exactly matching Excel bottom pattern */}
+                        {/* Signature bottom spreadsheet row */}
                         {(() => {
-                          const currentBags = successInfo?.bagagens || bagagens.filter(b => selectedBagIds.includes(b.id));
-                          const signatureRowNumber = currentBags.length + 2;
-                          const primeiroNome = (activeUser?.nome || "OPERADOR").trim().split(" ")[0].toUpperCase();
-                          const signatureString = `${primeiroNome} / ${activeUser?.matricula || "0"}`;
+                          const sigRowNumber = modalBagagens.length + 2;
+                          const userObj = modalFuncionarios[0] || activeUser;
+                          const signatureString = `${userObj.nome} / ${userObj.matricula || "0"}`;
                           return (
                             <tr className="bg-slate-50 border-b border-[#dadce0] text-slate-800 text-[11px] divide-x divide-[#dadce0] transition font-bold font-sans">
                               <td className="bg-[#f8f9fa] text-[#5f6368] font-normal text-center select-none py-2 border-r border-[#dadce0] font-sans font-medium text-[10px] w-10 sticky left-0 z-10">
-                                {signatureRowNumber}
+                                {sigRowNumber}
                               </td>
                               <td className="px-3 py-2 text-slate-500 font-sans font-normal">
                                 {formatarDataParaCsv(successInfo?.createdAt || new Date().toISOString())}
@@ -836,22 +1277,12 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                               <td className="px-3 py-2 text-center text-[#E31837] font-extrabold uppercase">
                                 FC
                               </td>
-                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
-                                0
-                              </td>
-                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
-                                0
-                              </td>
-                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
-                                0
-                              </td>
-                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
-                                0
-                              </td>
-                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">
-                                0
-                              </td>
-                              <td className="px-3 py-2 text-slate-900 font-mono tracking-wide select-all font-black text-right pr-4">
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">0</td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">0</td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">0</td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">0</td>
+                              <td className="px-3 py-2 text-center text-slate-400 font-medium font-mono">0</td>
+                              <td className="px-3 py-2 text-slate-900 font-mono tracking-wide font-black text-right pr-4">
                                 {signatureString}
                               </td>
                             </tr>
@@ -862,8 +1293,9 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                   </div>
 
                 </div>
+              )}
               </div>
-
+              
             </div>
 
             {/* MODAL FOOTER */}
