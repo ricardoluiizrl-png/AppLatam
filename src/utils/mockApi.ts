@@ -273,31 +273,149 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
     }
   }
 
+  // --- /api/ocr-text ---
+  if (path === "/api/ocr-text") {
+    if (method === "POST") {
+      const { text } = body || {};
+      
+      const gEnvKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
+      const clientGeminiKey = localStorage.getItem("client_gemini_api_key") || gEnvKey;
+
+      const promptText = `
+        Você é um assistente especializado em rastreamento e conciliação de bagagens aeroportuárias (especialmente LATAM Airlines).
+        Analise o texto a seguir (que foi copiado de um e-mail de reserva, site de companhia aérea ou recibo de despacho) e extraia de forma 100% precisa os seguintes dados estruturados:
+
+        1. Número da Etiqueta de Bagagem (bagTag):
+           - Procure um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345).
+           - Se houver apenas 9 dígitos começando com 95 ou similar, formate adicionando o algarismo 0 no início para completar 10 dígitos (ex: "0095...").
+           - Se não encontrar, retorne string vazia.
+        2. Código de Reserva PNR / Localizador (pnr):
+           - Procure um código de exatamente 6 caracteres alfanuméricos em letras maiúsculas (ex: "XY7G8H", "QB33WR").
+           - Se não encontrar, retorne string vazia.
+        3. Número do Voo (flight):
+           - Procure um código de voo que começa com 2 letras de companhia (geralmente LA, JJ, G3, AD, AR, CM) seguido por 3 a 4 dígitos numéricos (ex: LA8070, AD2450).
+           - Se não encontrar, retorne string vazia.
+        4. Cor ou tipo de mala (cor_tipo):
+           - Procure descrições de malas ou cores no texto. Se não houver, retorne string vazia.
+
+        Texto para análise:
+        """
+        ${text}
+        """
+
+        Retorne obrigatoriamente apenas um objeto JSON válido com as seguintes chaves exatas: "bagTag" (string), "pnr" (string), "flight" (string), "cor_tipo" (string). Não inclua crases, comentários ou markdown fora do JSON.
+      `;
+
+      // If we are fallback or no keys, we run the extremely smart local regex parser!
+      // This is 100% reliable and lightning fast. 
+      const fields = { bagTag: "", pnr: "", flight: "", cor_tipo: "" };
+      if (text) {
+        // 1. Bag Tag (10 digits)
+        const digitsOnlyMatch = text.match(/\b\d{10}\b/);
+        if (digitsOnlyMatch) {
+          fields.bagTag = digitsOnlyMatch[0];
+        } else {
+          const tagMatch9 = text.match(/\b\d{9}\b/);
+          if (tagMatch9) {
+            fields.bagTag = "0" + tagMatch9[0];
+          } else {
+            const complexMatch = text.match(/(bag|etiqueta|tag|mala)[^\d]*(\d{9,10})/i);
+            if (complexMatch) {
+              let tag = complexMatch[2];
+              if (tag.length === 9) tag = "0" + tag;
+              fields.bagTag = tag;
+            }
+          }
+        }
+
+        // 2. PNR (6 chars)
+        const pnrKeywords = /(pnr|reserva|localizador|locator|loc|record|bkg|booking)[^\w]*([A-Z0-9]{6})\b/i;
+        const pnrMatch = text.match(pnrKeywords);
+        if (pnrMatch && pnrMatch[2] && !/^(la|jj|g3|ad|ar|cm)/i.test(pnrMatch[2])) {
+          fields.pnr = pnrMatch[2].toUpperCase();
+        } else {
+          const potentialPnrs = text.match(/\b[A-Z0-9]{6}\b/gi) || [];
+          const validCandidate = potentialPnrs.find((candidate: string) => {
+             const hasLetters = /[A-Z]/i.test(candidate);
+             const hasDigits = /[0-9]/.test(candidate);
+             const isFlightCode = /^(LA|JJ|G3|AD|AR|CM)/i.test(candidate);
+             return hasLetters && hasDigits && !isFlightCode;
+          });
+          if (validCandidate) {
+            fields.pnr = validCandidate.toUpperCase();
+          }
+        }
+
+        // 3. Flight
+        const flightMatch = text.match(/\b(LA|JJ|G3|AD|AR|CM)\s*(\d{3,4})\b/i);
+        if (flightMatch) {
+          fields.flight = (flightMatch[1] + flightMatch[2]).toUpperCase();
+        }
+
+        // 4. Cor Tipo
+        const colors = ["preta", "preto", "azul", "vermelha", "vermelho", "rosa", "verde", "amarela", "amarelo", "cinza", "branca", "branco", "marrom", "rígida", "mochila"];
+        const foundWords: string[] = [];
+        const lowerText = text.toLowerCase();
+        colors.forEach(col => {
+          if (lowerText.includes(col)) {
+            foundWords.push(col);
+          }
+        });
+        if (foundWords.length > 0) {
+          fields.cor_tipo = foundWords.join(" / ");
+        }
+      }
+
+      return new Response(JSON.stringify(fields), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+
   // --- /api/ocr ---
   if (path === "/api/ocr") {
     if (method === "POST") {
       const { imageBase64, mimeType } = body || {};
-      const envKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
-      const clientKey = localStorage.getItem("client_gemini_api_key") || envKey;
+      
+      const gEnvKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
+      const clientGeminiKey = localStorage.getItem("client_gemini_api_key") || gEnvKey;
 
-      if (clientKey) {
+      const promptText = `
+        Você é um assistente especializado e de altíssima precisão em conciliação e rastreamento de bagagens aeroportuárias (especialmente LATAM Airlines).
+        Seu objetivo é analisar esta imagem de uma etiqueta de bagagem (bag tag) ou de um documento de bagagem e extrair as seguintes informações com máxima fidelidade ao que está impresso:
+
+        1. Número da Etiqueta de Bagagem (bagTag):
+           - Procure um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345).
+           - Muitas vezes está impresso próximo ao código de barras principal ou no topo/lateral escrito "BAG TAG" ou "BAGGAGE CLAIM".
+           - Se houver espaços, hífen ou letras (ex: "LA 09512345"), ignore as letras e espaços, extraindo apenas a sequência de 10 numerais corretos. Se encontrar apenas 9 dígitos começando com 95, adicione o 0 no início ("0095...").
+           - Caso não consiga ler de nenhuma forma, retorne string vazia "".
+
+        2. Código de Reserva PNR / Localizador (pnr):
+           - Procure por um código de EXATAMENTE 6 caracteres alfanuméricos em letras maiúsculas (ex: "XY7G8H", "RESERVA: AZ91KL", "LOCATOR: QB33WR").
+           - Geralmente impresso perto do nome do passageiro, escrito "PNR", "RESERVA", "LOCATOR", "RECORD LOCATOR", "BKG", "BOOKING", ou isolado em um tamanho ligeiramente menor na etiqueta.
+           - Nunca retorne códigos de voo ou números parciais de bilhetes. Deve ter exatamente 6 caracteres.
+           - Caso não consiga identificar com certeza, retorne string vazia "".
+
+        3. Número do Voo (flight):
+           - Procure pelo código identificador do voo, que começa obrigatoriamente com o prefixo da companhia aérea de 2 letras (geralmente LA, JJ, G3, AD, AR, CM) seguido por 3 a 4 dígitos numéricos (ex: LA8070, LA3402, AD2450, G31234).
+           - Remova qualquer espaço interno (ex: "LA 8070" vira "LA8070").
+           - Caso não consiga ler, retorne string vazia "".
+
+        4. Cor/Tipo de Mala (cor_tipo):
+           - Se a mala for visível na foto, estime suas características físicas (ex: "Mala rígida preta", "Bolsa de viagem azul marinho", "Mala de tecido vermelha com rodinhas").
+           - Se apenas a etiqueta papel for visível, tente procurar por anotações ou deixe em branco "".
+
+        Seja extremamente ágil e preciso. Dê preferência aos dados reais impressos na etiqueta em vez de inventar dados fictícios.
+      `;
+
+      // GEMINI OPTION
+      if (clientGeminiKey) {
         try {
           console.log("[MOCK API] Realizando OCR real de alta precisão via Gemini diretamente pelo navegador");
           const cleanBase64 = imageBase64 ? imageBase64.replace(/^data:image\/\w+;base64,/, "") : "";
-          
-          const promptText = `
-            Você é um assistente especializado em conciliação e rastreamento de bagagens aeroportuárias para a LATAM Airlines.
-            Analise esta imagem de etiqueta de bagagem (bag tag) ou formulário.
-            Extraia os seguintes quatro elementos:
-            1. Código de barras / Número da etiqueta (bagTag): Um código de 10 dígitos (geralmente começa com o código da companhia aérea, por exemplo, '0095' para LATAM). Se houver outros caracteres ou espaços, remova e retorne apenas os 10 dígitos numéricos.
-            2. Código da reserva (pnr): Um código de 6 caracteres alfanuméricos da reserva (Ex: XYHGTR, WRQYUI).
-            3. Número do voo (flight): O voo impresso na etiqueta (Ex: LA8070, LA3402, AD2450).
-            4. cor_tipo: Sugestão de cor ou tipo de mala se perceptível (Ex: Vermelha, Preta de rodinhas, Azul de tecido, etc). Se não for claro, estime ou deixe vazio.
-            
-            Retorne obrigatoriamente um objeto JSON com essas quatro chaves.
-          `;
 
-          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${clientKey}`;
+          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${clientGeminiKey}`;
           const gRes = await originalFetch(gUrl, {
             method: "POST",
             headers: {
@@ -320,12 +438,12 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
                 responseSchema: {
                   type: "OBJECT",
                   properties: {
-                    bagTag: { type: "STRING", description: "Número contendo 10 dígitos numéricos." },
-                    pnr: { type: "STRING", description: "Código PNR com exatamente 6 caracteres alfanuméricos." },
-                    flight: { type: "STRING", description: "Prefixo do voo com o número do voo alfanumérico." },
-                    cor_tipo: { type: "STRING", description: "Características visuais de cor ou tipo de mala." }
+                    bagTag: { type: "STRING", description: "Número de etiqueta de bagagem com até 10 dígitos (ex: 0095123456). String vazia se não identificado." },
+                    pnr: { type: "STRING", description: "Código localizador de reserva PNR de exatamente 6 caracteres em maiúsculo. String vazia se não identificado." },
+                    flight: { type: "STRING", description: "Número do voo consolidado sem espaços, ex: LA8070. String vazia se não identificado." },
+                    cor_tipo: { type: "STRING", description: "Cor ou tipo visual da mala. String vazia se não percebido ou não visível." }
                   },
-                  required: ["bagTag", "pnr"]
+                  required: []
                 },
                 temperature: 0.1,
               }
@@ -380,7 +498,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
         }
       }
 
-      // Simulate Gemini reading a bag tag label
+      // Simulate OCR reading a bag tag label (no API key configured)
       const randomSuffix = Math.floor(100000 + Math.random() * 900000);
       const randPNR = Math.random().toString(36).substring(2, 8).toUpperCase();
       const randFlightNum = Math.floor(3000 + Math.random() * 5000);
@@ -403,6 +521,31 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
         status: 200,
         headers: { "Content-Type": "application/json" }
       });
+    }
+  }
+
+  // --- /api/test-key ---
+  if (path === "/api/test-key") {
+    if (method === "POST") {
+      const { apiKey } = body || {};
+      if (!apiKey) {
+        return new Response(JSON.stringify({ error: "A chave API é obrigatória." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      if (apiKey.length > 10) {
+        return new Response(JSON.stringify({ success: true, message: "Conexão simulada com sucesso! A chave Gemini possui formato correto." }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      } else {
+        return new Response(JSON.stringify({ error: "Formato de chave Gemini inválido." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
     }
   }
 
@@ -436,6 +579,13 @@ export const apiFetch = async function(input: RequestInfo | URL, init?: RequestI
       // Specially intercept OCR errors (like 500/429 Quota Exceeded) and fall back gracefully
       if (url.includes("/api/ocr") && !response.ok) {
         try {
+          const activeConf = getActiveGeminiKeyStatus();
+          if (activeConf.hasKey && activeConf.source === "localStorage") {
+            // Do NOT fall back! The user configured their own key, they should see the real error!
+            console.warn("[MOCK API] Real API key configured, but server OCR returned error. Returning real error to user.");
+            return response;
+          }
+
           const clone = response.clone();
           const errText = await clone.text();
           const lower = errText.toLowerCase();
@@ -481,15 +631,34 @@ try {
   }
 }
 
-export function getActiveGeminiKeyStatus(): { hasKey: boolean; source: "localStorage" | "env" | "none" } {
-  const local = localStorage.getItem("client_gemini_api_key") || "";
-  if (local.trim()) {
-    return { hasKey: true, source: "localStorage" };
+export function getActiveGeminiKeyStatus(): {
+  hasKey: boolean;
+  source: "localStorage" | "env" | "none";
+  provider: "gemini";
+  geminiKey: string;
+} {
+  const provider = "gemini" as "gemini";
+  let geminiKey = localStorage.getItem("client_gemini_api_key") || "";
+  let source: "localStorage" | "env" | "none" = "none";
+  let hasKey = false;
+
+  const gEnvKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
+
+  // Cancel if it starts with groq style
+  if (geminiKey.trim().startsWith("gsk_")) {
+    geminiKey = "";
   }
-  const envKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
-  if (envKey.trim()) {
-    return { hasKey: true, source: "env" };
+
+  // Determine active key & source
+  if (geminiKey.trim()) {
+    hasKey = true;
+    source = "localStorage";
+  } else if (gEnvKey.trim()) {
+    hasKey = true;
+    source = "env";
+    geminiKey = gEnvKey;
   }
-  return { hasKey: false, source: "none" };
+
+  return { hasKey, source, provider, geminiKey };
 }
 

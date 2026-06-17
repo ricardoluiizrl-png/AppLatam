@@ -271,23 +271,117 @@ app.delete("/api/baggages/:id", (req, res) => {
   res.json({ success: true, message: "Bagagem removida permanentemente do banco." });
 });
 
-// 5. API: OCR via Gemini SDK
-app.post("/api/ocr", async (req, res) => {
-  const { imageBase64, mimeType } = req.body;
-
-  if (!imageBase64) {
-    return res.status(400).json({ error: "A imagem em base64 é obrigatória." });
-  }
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-    return res.status(500).json({ 
-      error: "Sua chave de API do Gemini não está configurada no servidor. Se você estiver no Google AI Studio, adicione GEMINI_API_KEY no painel de Secrets (canto superior direito). Se você estiver rodando em produção (como no Render), adicione GEMINI_API_KEY nas variáveis de ambiente (Environment Variables) do seu serviço no painel do Render."
-    });
+// API: test-key proxy to verify Gemini without CORS
+app.post("/api/test-key", async (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey) {
+    return res.status(400).json({ error: "Chave de API do Gemini é obrigatório." });
   }
 
   try {
-    // Lazy-load and initialize modern Gemini SDK
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: "OK" }] }]
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: `Erro na API Gemini: status ${response.status} (${errorText})` });
+    }
+
+    return res.json({ success: true, message: "Conexão com a API do Gemini efetuada com sucesso!" });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Erro de conexão ao servidor de IA." });
+  }
+});
+
+// Helper to robustly extract and parse JSON from a response string that may contain markdown or extra text
+function robustParseJSON(text: string): any {
+  let cleanText = text.trim();
+  
+  // If it starts/ends with markdown code block backticks
+  if (cleanText.includes("```")) {
+    const lines = cleanText.split("\n");
+    let jsonLines: string[] = [];
+    let insideBlock = false;
+    for (const line of lines) {
+      if (line.trim().startsWith("```")) {
+        insideBlock = !insideBlock;
+        continue;
+      }
+      if (insideBlock || jsonLines.length > 0) {
+        jsonLines.push(line);
+      }
+    }
+    if (jsonLines.length > 0) {
+      cleanText = jsonLines.join("\n").trim();
+    } else {
+      cleanText = cleanText.replace(/```json/g, "").replace(/```/g, "").trim();
+    }
+  }
+  
+  // Extract only the bracketed JSON object if extra text exists
+  const startIdx = cleanText.indexOf("{");
+  const endIdx = cleanText.lastIndexOf("}");
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    cleanText = cleanText.substring(startIdx, endIdx + 1);
+  }
+  
+  return JSON.parse(cleanText);
+}
+
+// 4.5. API: Text Parsing via Gemini SDK
+app.post("/api/ocr-text", async (req, res) => {
+  const { text } = req.body;
+
+  if (!text) {
+    return res.status(400).json({ error: "O texto para análise é obrigatório." });
+  }
+
+  const clientApiKey = (req.headers["x-api-key"] || req.headers["x-gemini-api-key"]) as string | undefined;
+
+  const promptText = `
+    Você é um assistente especializado e de extrema precisão em rastreamento e conciliação de bagagens aeroportuárias (especialmente LATAM Airlines).
+    Analise o texto a seguir (que foi copiado de um e-mail de reserva, site de companhia aérea, chat ou recibos de despacho em PDF) e extraia com máxima fidelidade e fidelidade os seguintes dados estruturados para a etiqueta e voo:
+
+    1. Número da Etiqueta de Bagagem (bagTag):
+       - Procure um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345).
+       - Se houver apenas 9 dígitos começando com 95, formate adicionando o algarismo 0 no início para completar 10 dígitos (ex: "0095...").
+       - Se não encontrar nenhum número de 9 ou 10 dígitos, deixe a string vazia "".
+    2. Código de Reserva PNR / Localizador (pnr):
+       - Procure um código de exatamente 6 caracteres alfanuméricos em letras maiúsculas (ex: "XY7G8H", "QB33WR").
+       - Mantenha estrito e evite confundir com códigos de voo ou horas.
+       - Se não encontrar, deixe a string vazia "".
+    3. Número do Voo (flight):
+       - Procure um código de voo que começa com 2 letras de companhia (geralmente LA, JJ, G3, AD, AR, CM) seguido por 3 a 4 dígitos numéricos (ex: LA8070, AD2450).
+       - Se não encontrar, deixe a string vazia "".
+    4. Cor ou tipo visual de mala (cor_tipo):
+       - Procure cores (preto, azul, vermelho, rosa, verde, amarela, cinza, branca, marrom) ou descrições (mochila, rígida, rodinhas, sacola). Se não houver, deixe a string vazia "".
+
+    Texto para análise:
+    """
+    ${text}
+    """
+
+    Retorne obrigatoriamente apenas um objeto JSON válido com as seguintes chaves exatas: "bagTag" (string), "pnr" (string), "flight" (string), "cor_tipo" (string). Não inclua crases, comentários ou markdown fora do JSON.
+  `;
+
+  try {
+    // GEMINI
+    const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+      return res.status(400).json({ 
+        error: "Chave de API do Gemini ausente para análise de texto. Por favor adicione sua chave própria nas configurações."
+      });
+    }
+
+    console.log("[SERVER TEXT OCR] Analisando texto via Gemini...");
     const ai = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
@@ -297,7 +391,93 @@ app.post("/api/ocr", async (req, res) => {
       }
     });
 
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: promptText,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            bagTag: { type: Type.STRING },
+            pnr: { type: Type.STRING },
+            flight: { type: Type.STRING },
+            cor_tipo: { type: Type.STRING }
+          }
+        },
+        temperature: 0.1,
+      }
+    });
+
+    const resultText = response.text;
+    if (!resultText) throw new Error("Resposta do Gemini vazia para parsing de texto");
+
+    const parsed = robustParseJSON(resultText);
+    return res.json(parsed);
+  } catch (error: any) {
+    console.error("Erro no processamento de texto OCR:", error);
+    res.status(500).json({ error: "Falha ao analisar texto com IA: " + (error.message || error) });
+  }
+});
+
+// 5. API: OCR via Gemini SDK
+app.post("/api/ocr", async (req, res) => {
+  const { imageBase64, mimeType } = req.body;
+
+  if (!imageBase64) {
+    return res.status(400).json({ error: "A imagem em base64 é obrigatória." });
+  }
+
+  const clientApiKey = (req.headers["x-api-key"] || req.headers["x-gemini-api-key"]) as string | undefined;
+
+  const promptText = `
+    Você é um assistente especializado e de altíssima precisão em conciliação e rastreamento de bagagens aeroportuárias (especialmente LATAM Airlines).
+    Seu objetivo é analisar esta imagem de uma etiqueta de bagagem (bag tag) ou de um documento de bagagem e extrair as seguintes informações com máxima fidelidade ao que está impresso:
+
+    1. Número da Etiqueta de Bagagem (bagTag):
+       - Procure um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345).
+       - Muitas vezes está impresso próximo ao código de barras principal ou no topo/lateral escrito "BAG TAG" ou "BAGGAGE CLAIM".
+       - Se houver espaços, hífen ou letras (ex: "LA 09512345"), ignore as letras e espaços, extraindo apenas a sequência de 10 numerais corretos. Se encontrar apenas 9 dígitos começando com 95, adicione o 0 no início ("0095...").
+       - Caso não consiga ler de nenhuma forma, retorne string vazia "".
+
+    2. Código de Reserva PNR / Localizador (pnr):
+       - Procure por um código de EXATAMENTE 6 caracteres alfanuméricos em letras maiúsculas (ex: "XY7G8H", "RESERVA: AZ91KL", "LOCATOR: QB33WR").
+       - Geralmente impresso perto do nome do passageiro, escrito "PNR", "RESERVA", "LOCATOR", "RECORD LOCATOR", "BKG", "BOOKING", ou isolado em um tamanho ligeiramente menor na etiqueta.
+       - Nunca retorne códigos de voo ou números parciais de bilhetes. Deve ter exatamente 6 caracteres.
+       - Caso não consiga identificar com certeza, retorne string vazia "".
+
+    3. Número do Voo (flight):
+       - Procure pelo código identificador do voo, que começa obrigatoriamente com o prefixo da companhia aérea de 2 letras (geralmente LA, JJ, G3, AD, AR, CM) seguido por 3 a 4 dígitos numéricos (ex: LA8070, LA3402, AD2450, G31234).
+       - Remova qualquer espaço interno (ex: "LA 8070" vira "LA8070").
+       - Caso não consiga ler, retorne string vazia "".
+
+    4. Cor/Tipo de Mala (cor_tipo):
+       - Se a mala for visível na foto, estime suas características físicas (ex: "Mala rígida preta", "Bolsa de viagem azul marinho", "Mala de tecido vermelha com rodinhas").
+       - Se apenas a etiqueta papel for visível, tente procurar por anotações ou deixe em branco "".
+
+    Seja extremamente ágil e preciso. Dê preferência aos dados reais impressos na etiqueta em vez de inventar dados fictícios.
+  `;
+
+  try {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+
+    // DEFAULT TO GEMINI
+    const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+      return res.status(400).json({ 
+        error: "Cota limite ou Chave de API do Gemini ausente. Por favor, adicione sua própria chave de API do Gemini para continuar a digitalização real."
+      });
+    }
+
+    console.log("[SERVER OCR] Realizando OCR real de alta precisão via Gemini...");
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        }
+      }
+    });
 
     const imagePart = {
       inlineData: {
@@ -306,19 +486,8 @@ app.post("/api/ocr", async (req, res) => {
       }
     };
 
-    const promptText = `
-      Você é um assistente especializado em conciliação e rastreamento de bagagens aeroportuárias para a LATAM Airlines.
-      Analise esta imagem de etiqueta de bagagem (bag tag) ou formulário.
-      Extraia os seguintes três elementos obrigatórios descritos nestas regras:
-      1. Código de barras / Número da etiqueta (bagTag): Um código de 10 dígitos (geralmente começa com o código da companhia aérea, por exemplo, '0095' para LATAM). Se houver quebras de linha ou caracteres, limpe deixando apenas os 10 dígitos numéricos.
-      2. Código da reserva (pnr): Um código de 6 caracteres alfanuméricos da reserva.
-      3. Número do voo (flight): O voo impresso na etiqueta (Ex: LA8070, LA3402, AD2450).
-      
-      Se algum destes houver incerteza, faça a melhor leitura mecânica possível baseada no OCR visual do aeroporto.
-    `;
-
     const response = await ai.models.generateContent({
-      model: "gemini-flash-latest",
+      model: "gemini-3.5-flash",
       contents: [
         imagePart,
         { text: promptText }
@@ -328,12 +497,12 @@ app.post("/api/ocr", async (req, res) => {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            bagTag: { type: Type.STRING, description: "Número de etiqueta de bagagem com exatamente 10 dígitos decimais." },
-            pnr: { type: Type.STRING, description: "Código da reserva PNR com exatamente 6 caracteres alfanuméricos em caixa alta." },
-            flight: { type: Type.STRING, description: "Número de voo com prefixo de 2 letras seguido de números, ex: LA8070." },
-            cor_tipo: { type: Type.STRING, description: "Sugestão de cor ou tipo de mala se perceptível (ex: preta, azul, etc). Senão deixe vazio." }
+            bagTag: { type: Type.STRING, description: "Número de etiqueta de bagagem com até 10 dígitos (ex: 0095123456). String vazia se não identificado." },
+            pnr: { type: Type.STRING, description: "Código localizador de reserva PNR de exatamente 6 caracteres em maiúsculo. String vazia se não identificado." },
+            flight: { type: Type.STRING, description: "Número do voo consolidado sem espaços, ex: LA8070. String vazia se não identificado." },
+            cor_tipo: { type: Type.STRING, description: "Cor ou tipo visual da mala. String vazia se não percebido ou não visível." }
           },
-          required: ["bagTag", "pnr"]
+          required: []
         },
         temperature: 0.1,
       }
@@ -344,7 +513,7 @@ app.post("/api/ocr", async (req, res) => {
       throw new Error("Resposta do Gemini vazia");
     }
 
-    const parsed = JSON.parse(resultText.trim());
+    const parsed = robustParseJSON(resultText);
     res.json(parsed);
 
   } catch (error: any) {
@@ -352,9 +521,9 @@ app.post("/api/ocr", async (req, res) => {
     const isQuotaError = errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted") || errorStr.includes("exceeded");
 
     if (isQuotaError) {
-      console.warn("[SERVER OCR API] Gemini API key quota limit reached. Instructing client to configure custom key or fallback to local simulated mode.");
+      console.warn("[SERVER OCR API] API key quota limit reached or 429.");
       return res.status(429).json({
-        error: "Cota limite atingida da chave do servidor. Para usar sem limites, insira sua chave do Gemini própria no painel.",
+        error: "Cota limite atingida da chave. Para usar sem limites, insira sua chave própria de API no painel de configurações da tela.",
         quotaExceeded: true
       });
     }

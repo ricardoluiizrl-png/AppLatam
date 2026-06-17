@@ -12,7 +12,8 @@ import {
   Edit2,
   Check,
   UserCheck,
-  BarChart3
+  BarChart3,
+  Settings
 } from "lucide-react";
 
 interface AppLayoutProps {
