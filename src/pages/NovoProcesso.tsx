@@ -121,7 +121,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   const handleUpdateBagagem = async (id: string, field: keyof Bagagem, value: string) => {
     let sanitizedValue = value;
     if (field === "etiqueta") {
-      sanitizedValue = value.replace(/\D/g, "").slice(0, 10);
+      sanitizedValue = value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
     } else if (field === "pnr") {
       sanitizedValue = value.toUpperCase().slice(0, 6);
     }
@@ -1047,12 +1047,12 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                             </select>
                           </div>
                           <div className="text-left">
-                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Etiqueta (10 dígitos)</label>
+                            <label className="block text-[10px] text-blue-200 uppercase font-bold mb-1">Etiqueta (Até 12 caracteres)</label>
                             <input 
                               type="text" 
-                              maxLength={10}
+                              maxLength={12}
                               value={newBagSub.etiqueta}
-                              onChange={(e) => setNewBagSub({...newBagSub, etiqueta: e.target.value.replace(/\D/g, "")})}
+                              onChange={(e) => setNewBagSub({...newBagSub, etiqueta: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")})}
                               placeholder="Ex: 0045202956"
                               className="w-full bg-white text-black font-extrabold text-xs p-1.5 font-mono outline-none"
                             />

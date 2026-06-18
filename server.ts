@@ -271,16 +271,17 @@ app.delete("/api/baggages/:id", (req, res) => {
   res.json({ success: true, message: "Bagagem removida permanentemente do banco." });
 });
 
-// API: test-key proxy to verify Gemini without CORS
+// API: test-key proxy to verify Gemini 2.5 without CORS
 app.post("/api/test-key", async (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey) {
-    return res.status(400).json({ error: "Chave de API do Gemini é obrigatório." });
+    return res.status(400).json({ error: "Chave de API do Gemini é obrigatória." });
   }
 
   try {
+    // Default: Gemini 2.5
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -295,7 +296,7 @@ app.post("/api/test-key", async (req, res) => {
       return res.status(response.status).json({ error: `Erro na API Gemini: status ${response.status} (${errorText})` });
     }
 
-    return res.json({ success: true, message: "Conexão com a API do Gemini efetuada com sucesso!" });
+    return res.json({ success: true, message: "Conexão com a API do Gemini 3.5 efetuada com sucesso!" });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || "Erro de conexão ao servidor de IA." });
   }
@@ -351,15 +352,16 @@ app.post("/api/ocr-text", async (req, res) => {
     Analise o texto a seguir (que foi copiado de um e-mail de reserva, site de companhia aérea, chat ou recibos de despacho em PDF) e extraia com máxima fidelidade e fidelidade os seguintes dados estruturados para a etiqueta e voo:
 
     1. Número da Etiqueta de Bagagem (bagTag):
-       - Procure um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345).
-       - Se houver apenas 9 dígitos começando com 95, formate adicionando o algarismo 0 no início para completar 10 dígitos (ex: "0095...").
-       - Se não encontrar nenhum número de 9 ou 10 dígitos, deixe a string vazia "".
+       - Geralmente é um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345), mas novas etiquetas da LATAM podem conter LETRAS e NÚMEROS juntos (código alfanumérico, ex: LA123456 ou 0095A6B7).
+       - Se houver caracteres com letras e números misturados na etiqueta, extraia a sequência alfanumérica correspondente, removendo apenas hifens ou espaços (geralmente de 8 a 12 caracteres).
+       - Se houver apenas 9 dígitos puramente numéricos começando com 9, formate adicionando o algarismo 0 no início para completar 10 dígitos (ex: "09...").
+       - Se não encontrar nenhum código de etiqueta válido, deixe a string vazia "".
     2. Código de Reserva PNR / Localizador (pnr):
        - Procure um código de exatamente 6 caracteres alfanuméricos em letras maiúsculas (ex: "XY7G8H", "QB33WR").
        - Mantenha estrito e evite confundir com códigos de voo ou horas.
        - Se não encontrar, deixe a string vazia "".
     3. Número do Voo (flight):
-       - Procure um código de voo que começa com 2 letras de companhia (geralmente LA, JJ, G3, AD, AR, CM) seguido por 3 a 4 dígitos numéricos (ex: LA8070, AD2450).
+       - Procure um código de voo que começa com 2 letras de companhia (geralmente LA, JJ, G3, AD, AR, CM) conhecido ou não, seguido por 3 a 4 dígitos numéricos (ex: LA8070, AD2450).
        - Se não encontrar, deixe a string vazia "".
     4. Cor ou tipo visual de mala (cor_tipo):
        - Procure cores (preto, azul, vermelho, rosa, verde, amarela, cinza, branca, marrom) ou descrições (mochila, rígida, rodinhas, sacola). Se não houver, deixe a string vazia "".
@@ -373,15 +375,15 @@ app.post("/api/ocr-text", async (req, res) => {
   `;
 
   try {
-    // GEMINI
+    // GEMINI DEFAULT
     const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
       return res.status(400).json({ 
-        error: "Chave de API do Gemini ausente para análise de texto. Por favor adicione sua chave própria nas configurações."
+        error: "Chave de API do Gemini 3.5 ausente para análise de texto. Por favor adicione sua chave própria nas configurações."
       });
     }
 
-    console.log("[SERVER TEXT OCR] Analisando texto via Gemini...");
+    console.log("[SERVER TEXT OCR] Analisando texto via Gemini 2.5...");
     const ai = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
@@ -392,7 +394,7 @@ app.post("/api/ocr-text", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: promptText,
       config: {
         responseMimeType: "application/json",
@@ -415,6 +417,21 @@ app.post("/api/ocr-text", async (req, res) => {
     const parsed = robustParseJSON(resultText);
     return res.json(parsed);
   } catch (error: any) {
+    const errorStr = String(error.message || error).toLowerCase();
+    const isExpiredError = errorStr.includes("expired") || errorStr.includes("renew the api key") || errorStr.includes("invalid_argument") || errorStr.includes("api_key_invalid");
+    const isQuotaError = errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted") || errorStr.includes("exceeded");
+
+    if (isExpiredError) {
+      return res.status(401).json({
+        error: "A chave de API do Gemini expirou ou é inválida. Por favor, insira ou atualize sua própria chave de API do Gemini 3.5 no painel de configurações abaixo da câmera."
+      });
+    }
+    if (isQuotaError) {
+      return res.status(429).json({
+        error: "Cota limite atingida do Gemini. Por favor, insira sua própria chave de API do Gemini 3.5 nas configurações abaixo da câmera para continuar de graça."
+      });
+    }
+
     console.error("Erro no processamento de texto OCR:", error);
     res.status(500).json({ error: "Falha ao analisar texto com IA: " + (error.message || error) });
   }
@@ -435,9 +452,10 @@ app.post("/api/ocr", async (req, res) => {
     Seu objetivo é analisar esta imagem de uma etiqueta de bagagem (bag tag) ou de um documento de bagagem e extrair as seguintes informações com máxima fidelidade ao que está impresso:
 
     1. Número da Etiqueta de Bagagem (bagTag):
-       - Procure um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345).
+       - Geralmente é um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345), mas ATENÇÃO: novas etiquetas da LATAM podem conter LETRAS e NÚMEROS juntos (ex: código alfanumérico com letras e números misturados).
        - Muitas vezes está impresso próximo ao código de barras principal ou no topo/lateral escrito "BAG TAG" ou "BAGGAGE CLAIM".
-       - Se houver espaços, hífen ou letras (ex: "LA 09512345"), ignore as letras e espaços, extraindo apenas a sequência de 10 numerais corretos. Se encontrar apenas 9 dígitos começando com 95, adicione o 0 no início ("0095...").
+       - Se houver letras e números misturados, extraia todos eles juntos (com as letras e números correspondentes) removendo apenas hifens, barras ou espaços em branco. O código normalmente possui entre 8 e 12 caracteres alfanuméricos.
+       - Se encontrar apenas 9 dígitos puramente numéricos começando com 9, adicione o 0 no início ("09...").
        - Caso não consiga ler de nenhuma forma, retorne string vazia "".
 
     2. Código de Reserva PNR / Localizador (pnr):
@@ -447,7 +465,7 @@ app.post("/api/ocr", async (req, res) => {
        - Caso não consiga identificar com certeza, retorne string vazia "".
 
     3. Número do Voo (flight):
-       - Procure pelo código identificador do voo, que começa obrigatoriamente com o prefixo da companhia aérea de 2 letras (geralmente LA, JJ, G3, AD, AR, CM) seguido por 3 a 4 dígitos numéricos (ex: LA8070, LA3402, AD2450, G31234).
+       - Procure pelo código identificador do voo, que começa obrigatoriamente com o prefixo da companhia aérea de 2 letras (geralmente LA, JJ, G3, AD, AR, CM) conhecido ou não, seguido por 3 a 4 dígitos numéricos (ex: LA8070, LA3402, AD2450, G31234).
        - Remova qualquer espaço interno (ex: "LA 8070" vira "LA8070").
        - Caso não consiga ler, retorne string vazia "".
 
@@ -456,20 +474,28 @@ app.post("/api/ocr", async (req, res) => {
        - Se apenas a etiqueta papel for visível, tente procurar por anotações ou deixe em branco "".
 
     Seja extremamente ágil e preciso. Dê preferência aos dados reais impressos na etiqueta em vez de inventar dados fictícios.
+
+    Retorne obrigatoriamente apenas um objeto JSON válido com as seguintes chaves exatas:
+    {
+      "bagTag": "string com o número da etiqueta ou código alfanumérico",
+      "pnr": "string com o localizador de 6 caracteres",
+      "flight": "string com o número do voo (ex: LA8070)",
+      "cor_tipo": "string com a descrição física da mala"
+    }
   `;
 
   try {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
 
-    // DEFAULT TO GEMINI
+    // DEFAULT TO GEMINI 2.5
     const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
       return res.status(400).json({ 
-        error: "Cota limite ou Chave de API do Gemini ausente. Por favor, adicione sua própria chave de API do Gemini para continuar a digitalização real."
+        error: "Chave de API do Gemini 2.5 ausente ou expirada. Por favor, adicione sua própria chave de API do Gemini nas configurações abaixo da câmera."
       });
     }
 
-    console.log("[SERVER OCR] Realizando OCR real de alta precisão via Gemini...");
+    console.log("[SERVER OCR] Realizando OCR real de alta precisão via Gemini 2.5...");
     const ai = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
@@ -487,7 +513,7 @@ app.post("/api/ocr", async (req, res) => {
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: [
         imagePart,
         { text: promptText }
@@ -497,7 +523,7 @@ app.post("/api/ocr", async (req, res) => {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            bagTag: { type: Type.STRING, description: "Número de etiqueta de bagagem com até 10 dígitos (ex: 0095123456). String vazia se não identificado." },
+            bagTag: { type: Type.STRING, description: "Código ou número de etiqueta de bagagem de 8 a 12 caracteres (pode conter números e letras misturados. Ex: LA00951342 ou 0095312340). String vazia se não identificado." },
             pnr: { type: Type.STRING, description: "Código localizador de reserva PNR de exatamente 6 caracteres em maiúsculo. String vazia se não identificado." },
             flight: { type: Type.STRING, description: "Número do voo consolidado sem espaços, ex: LA8070. String vazia se não identificado." },
             cor_tipo: { type: Type.STRING, description: "Cor ou tipo visual da mala. String vazia se não percebido ou não visível." }
@@ -518,12 +544,19 @@ app.post("/api/ocr", async (req, res) => {
 
   } catch (error: any) {
     const errorStr = String(error.message || error).toLowerCase();
+    const isExpiredError = errorStr.includes("expired") || errorStr.includes("renew the api key") || errorStr.includes("invalid_argument") || errorStr.includes("api_key_invalid");
     const isQuotaError = errorStr.includes("quota") || errorStr.includes("429") || errorStr.includes("exhausted") || errorStr.includes("exceeded");
+
+    if (isExpiredError) {
+      return res.status(401).json({
+        error: "A chave de API global padrão do Gemini expirou ou é inválida. Por favor, insira ou atualize sua própria chave de API do Gemini 3.5 no painel de configurações abaixo da câmera."
+      });
+    }
 
     if (isQuotaError) {
       console.warn("[SERVER OCR API] API key quota limit reached or 429.");
       return res.status(429).json({
-        error: "Cota limite atingida da chave. Para usar sem limites, insira sua chave própria de API no painel de configurações da tela.",
+        error: "Cota limite atingida do Gemini. Para continuar processando com precisão máxima, adicione sua própria chave de API do Gemini 3.5 no painel abaixo da câmera.",
         quotaExceeded: true
       });
     }

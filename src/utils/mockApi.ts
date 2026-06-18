@@ -637,17 +637,11 @@ export function getActiveGeminiKeyStatus(): {
   provider: "gemini";
   geminiKey: string;
 } {
-  const provider = "gemini" as "gemini";
   let geminiKey = localStorage.getItem("client_gemini_api_key") || "";
   let source: "localStorage" | "env" | "none" = "none";
   let hasKey = false;
 
   const gEnvKey = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env.VITE_GEMINI_API_KEY || "") : "";
-
-  // Cancel if it starts with groq style
-  if (geminiKey.trim().startsWith("gsk_")) {
-    geminiKey = "";
-  }
 
   // Determine active key & source
   if (geminiKey.trim()) {
@@ -659,6 +653,6 @@ export function getActiveGeminiKeyStatus(): {
     geminiKey = gEnvKey;
   }
 
-  return { hasKey, source, provider, geminiKey };
+  return { hasKey, source, provider: "gemini", geminiKey };
 }
 

@@ -16,7 +16,9 @@ import {
   Settings,
   Key,
   Eye,
-  EyeOff
+  EyeOff,
+  Zap,
+  ExternalLink
 } from "lucide-react";
 import { Bagagem, SITUACOES, SituacaoType } from "../types";
 
@@ -54,8 +56,45 @@ const compressImage = (base64Str: string, maxDimension = 1200): Promise<string> 
       canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (ctx) {
+        // Boost contrast and turn grayscale using Native Canvas Filter when supported
+        try {
+          ctx.filter = "grayscale(100%) contrast(150%) brightness(105%)";
+        } catch (e) {
+          console.warn("Filtro nativo de canvas não suportado:", e);
+        }
+        
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.8));
+
+        // Standard Pixel manipulation fallback/enhancement to guarantee stark contrast grayscale
+        try {
+          const imgData = ctx.getImageData(0, 0, width, height);
+          const data = imgData.data;
+          
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            
+            // Convert to grayscale using standard Luminosity formula
+            const gray = (0.299 * r) + (0.587 * g) + (0.114 * b);
+            
+            // Apply a strong contrast curve
+            // val = factor * (gray - 128) + 128
+            // A factor of 1.6 - 1.8 makes the text super high contrast against label background
+            let val = Math.round(1.6 * (gray - 128) + 128);
+            if (val < 0) val = 0;
+            if (val > 255) val = 255;
+            
+            data[i] = val;     // R
+            data[i + 1] = val; // G
+            data[i + 2] = val; // B
+          }
+          ctx.putImageData(imgData, 0, 0);
+        } catch (err) {
+          console.warn("Manipulação de pixels direta falhou:", err);
+        }
+
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
       } else {
         resolve(base64Str);
       }
@@ -77,19 +116,8 @@ export default function LerEtiqueta() {
   // List of pending scanned tags to be previewed/edited
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
 
-  // NEW: Interactive Input & Text Copy-Pasting Methods for 100% precision from online sites
-  const [activeTab, setActiveTab] = useState<"camera" | "paste" | "manual">("camera");
-  const [pastedText, setPastedText] = useState("");
-  const [extractedFields, setExtractedFields] = useState({
-    bagTag: "",
-    pnr: "",
-    flight: "",
-    corTipo: "",
-    situacao: "PR" as SituacaoType,
-    observacoes: ""
-  });
-  const [isExtractingText, setIsExtractingText] = useState(false);
-  const [extractTextError, setExtractTextError] = useState<string | null>(null);
+  // NEW: Interactive Input Methods for 100% precision from online sites
+  const [activeTab, setActiveTab] = useState<"camera" | "manual">("camera");
 
   // Manual Form temporary state
   const [manualForm, setManualForm] = useState({
@@ -101,10 +129,15 @@ export default function LerEtiqueta() {
     observacoes: ""
   });
 
-  const [apiKeyStatus, setApiKeyStatus] = useState({
+  const [apiKeyStatus, setApiKeyStatus] = useState<{
+    hasKey: boolean;
+    source: "localStorage" | "env" | "none";
+    provider: "gemini";
+    geminiKey: string;
+  }>({
     hasKey: false,
-    source: "none" as "localStorage" | "env" | "none",
-    provider: "gemini" as "gemini",
+    source: "none",
+    provider: "gemini",
     geminiKey: ""
   });
 
@@ -159,7 +192,7 @@ export default function LerEtiqueta() {
 
   // High-precision automatic validation function per scanned item (dynamically checked)
   const checkValidation = (bagTag?: string, pnr?: string) => {
-    const cleanTag = (bagTag || "").replace(/\D/g, "").trim();
+    const cleanTag = (bagTag || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
     const cleanPnr = (pnr || "").trim().toUpperCase();
 
     if (!cleanTag && !cleanPnr) {
@@ -168,7 +201,7 @@ export default function LerEtiqueta() {
 
     // 1. Check in currently active bags
     const activeMatch = savedLists.find((b: any) => {
-      const bTag = (b.etiqueta || "").replace(/\D/g, "").trim();
+      const bTag = (b.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
       const bPnr = (b.pnr || "").trim().toUpperCase();
       return (cleanTag && bTag === cleanTag) || (cleanPnr && bPnr === cleanPnr);
     });
@@ -185,7 +218,7 @@ export default function LerEtiqueta() {
     for (const proc of processes) {
       if (Array.isArray(proc.bagagens)) {
         const match = proc.bagagens.find((b: any) => {
-          const bTag = (b.etiqueta || "").replace(/\D/g, "").trim();
+          const bTag = (b.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
           const bPnr = (b.pnr || "").trim().toUpperCase();
           return (cleanTag && bTag === cleanTag) || (cleanPnr && bPnr === cleanPnr);
         });
@@ -334,12 +367,18 @@ export default function LerEtiqueta() {
     };
   }, [stream]);
 
-  // We do NOT start the camera automatically anymore, preventing mobile Safari/Chrome from blocking camera permissions on page mount.
-  // Instead, the user activates the camera cleanly on gesture (by pressing the "Ativar Câmera" button).
+  // Colocar a camera sempre ativa (100% ativa) assim que entrar na aba de ler etiquetas
   useEffect(() => {
-    // Only fetch saved states on mount
     setIsQuotaSimulated(false);
-  }, []);
+    if (activeTab === "camera") {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => {
+      stopCamera();
+    };
+  }, [activeTab]);
 
   // Handle API Key Management
   const handleSaveKey = () => {
@@ -347,13 +386,13 @@ export default function LerEtiqueta() {
     setTestKeyError(null);
     const key = manualKeyInput.trim();
     if (!key) {
-      alert("Por favor, digite uma chave de API válida do Gemini.");
+      alert("Por favor, digite uma chave de API válida para o Gemini 3.5.");
       return;
     }
     localStorage.setItem("client_gemini_api_key", key);
     const status = getActiveGeminiKeyStatus();
     setApiKeyStatus(status);
-    alert("Chave do Gemini gravada com sucesso localmente!");
+    alert("Chave do Gemini 3.5 gravada com sucesso localmente!");
   };
 
   const handleClearKey = () => {
@@ -387,9 +426,9 @@ export default function LerEtiqueta() {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        setTestKeySuccess("Conexão efetuada com sucesso! Chave de API ativa e funcional.");
+        setTestKeySuccess("Conexão efetuada com sucesso! Chave de API do Gemini 3.5 ativa e funcional.");
       } else {
-        setTestKeyError(data.error || "Erro ao testar chave de API.");
+        setTestKeyError(data.error || "Erro ao testar chave de API do Gemini 3.5.");
       }
     } catch (err: any) {
       setTestKeyError(err.message || "Erro de conexão ao servidor de homologação da chave.");
@@ -398,171 +437,7 @@ export default function LerEtiqueta() {
     }
   };
 
-  // --- NEW WORKFLOW FUNCTIONS FOR ONLINE TEXT EXTRACTION & MANUAL SUBMISSION ---
-  const parseTextRegex = (text: string) => {
-    const fields = {
-      bagTag: "",
-      pnr: "",
-      flight: "",
-      corTipo: "",
-      situacao: "PR" as SituacaoType,
-      observacoes: ""
-    };
 
-    if (!text.trim()) {
-      setExtractedFields(fields);
-      return;
-    }
-
-    // 1. Número de Etiqueta (Bag Tag - 10 dígitos decimais sequenciais)
-    const digitsOnlyMatch = text.match(/\b\d{10}\b/);
-    if (digitsOnlyMatch) {
-      fields.bagTag = digitsOnlyMatch[0];
-    } else {
-      // Caso o usuário tenha copiado 9 dígitos iniciando com 95 ou similar (comum em comprovantes da LATAM)
-      const tagMatch9 = text.match(/\b\d{9}\b/);
-      if (tagMatch9) {
-        fields.bagTag = "0" + tagMatch9[0];
-      } else {
-        const complexMatch = text.match(/(bag|etiqueta|tag|mala|bagagem|vol)[^\d]*(\d{9,10})/i);
-        if (complexMatch) {
-          let tag = complexMatch[2];
-          if (tag.length === 9) tag = "0" + tag;
-          fields.bagTag = tag;
-        }
-      }
-    }
-
-    // 2. Localizador de Reserva PNR (exatamente 6 caracteres alfanuméricos)
-    const pnrKeywords = /(pnr|reserva|localizador|locator|loc|record|bkg|booking)[^\w]*([A-Z0-9]{6})\b/i;
-    const pnrMatch = text.match(pnrKeywords);
-    if (pnrMatch && pnrMatch[2] && !/^(la|jj|g3|ad|ar|cm)/i.test(pnrMatch[2])) {
-      fields.pnr = pnrMatch[2].toUpperCase();
-    } else {
-      const potentialPnrs = text.match(/\b[A-Z0-9]{6}\b/gi) || [];
-      const validCandidate = potentialPnrs.find((candidate) => {
-        const hasLetters = /[A-Z]/i.test(candidate);
-        const hasDigits = /[0-9]/.test(candidate);
-        const isFlightCode = /^(LA|JJ|G3|AD|AR|CM)/i.test(candidate);
-        return hasLetters && hasDigits && !isFlightCode;
-      });
-      if (validCandidate) {
-        fields.pnr = validCandidate.toUpperCase();
-      }
-    }
-
-    // 3. Número do Voo
-    const flightMatch = text.match(/\b(LA|JJ|G3|AD|AR|CM)\s*(\d{3,4})\b/i);
-    if (flightMatch) {
-      fields.flight = (flightMatch[1] + flightMatch[2]).toUpperCase();
-    }
-
-    // 4. Cor / Tipo de Mala
-    const colors = ["preta", "preto", "azul", "vermelha", "vermelho", "rosa", "verde", "amarela", "amarelo", "cinza", "branca", "branco", "marrom", "rígida", "mochila", "sacola"];
-    const foundWords: string[] = [];
-    const lowerText = text.toLowerCase();
-    colors.forEach(col => {
-      if (lowerText.includes(col)) {
-        foundWords.push(col);
-      }
-    });
-    if (foundWords.length > 0) {
-      fields.corTipo = foundWords.join(" / ");
-    }
-
-    setExtractedFields(fields);
-  };
-
-  const handleAITextExtraction = async () => {
-    if (!pastedText.trim()) return;
-    setIsExtractingText(true);
-    setExtractTextError(null);
-
-    try {
-      const activeConf = getActiveGeminiKeyStatus();
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        "x-ai-provider": "gemini"
-      };
-
-      const activeKey = activeConf.geminiKey;
-      if (activeKey) {
-        headers["x-api-key"] = activeKey;
-        headers["x-gemini-api-key"] = activeKey;
-      }
-
-      const response = await apiFetch("/api/ocr-text", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ text: pastedText })
-      });
-
-      if (!response.ok) {
-        const errJson = await response.json();
-        throw new Error(errJson.error || "Erro ao processar texto com IA.");
-      }
-
-      const parsed = await response.json();
-      setExtractedFields({
-        bagTag: parsed.bagTag || "",
-        pnr: parsed.pnr || "",
-        flight: parsed.flight || parsed.flightCode || "",
-        corTipo: parsed.cor_tipo || parsed.corTipo || "",
-        situacao: "PR",
-        observacoes: ""
-      });
-    } catch (err: any) {
-      console.error(err);
-      setExtractTextError(err.message || "Erro na conexão com IA de texto.");
-    } finally {
-      setIsExtractingText(false);
-    }
-  };
-
-  const saveExtractedToStash = async () => {
-    if (!extractedFields.bagTag || !extractedFields.pnr) {
-      alert("Por favor insira ao menos o número da etiqueta e o PNR.");
-      return;
-    }
-
-    const newItem = {
-      etiqueta: extractedFields.bagTag,
-      pnr: extractedFields.pnr,
-      vooOrigem: extractedFields.flight,
-      corTipo: extractedFields.corTipo,
-      situacao: extractedFields.situacao || "PR",
-      dataVoo: new Date().toLocaleDateString("pt-BR"),
-      observacoes: extractedFields.observacoes || ""
-    };
-
-    try {
-      setLoading(true);
-      const res = await apiFetch("/api/baggages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newItem)
-      });
-      if (res.ok) {
-        setPastedText("");
-        setExtractedFields({
-          bagTag: "",
-          pnr: "",
-          flight: "",
-          corTipo: "",
-          situacao: "PR",
-          observacoes: ""
-        });
-        await fetchSavedBags();
-      } else {
-        alert("Erro ao salvar bagagem extraída.");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Erro de conexão ao salvar bagagem.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const saveManualToStash = async () => {
     if (!manualForm.bagTag || !manualForm.pnr) {
@@ -617,10 +492,9 @@ export default function LerEtiqueta() {
         "x-ai-provider": "gemini"
       };
       
-      const activeKey = activeConf.geminiKey;
-      if (activeKey) {
-        headers["x-api-key"] = activeKey;
-        headers["x-gemini-api-key"] = activeKey;
+      if (activeConf.geminiKey) {
+        headers["x-api-key"] = activeConf.geminiKey;
+        headers["x-gemini-api-key"] = activeConf.geminiKey;
       }
 
       const response = await apiFetch("/api/ocr", {
@@ -692,7 +566,7 @@ export default function LerEtiqueta() {
         canvas.height = video.videoHeight || 480;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
         const tempId = Math.random().toString(36).substring(2, 9);
         const fileName = `Foto ${new Date().toLocaleTimeString("pt-BR")}`;
 
@@ -709,7 +583,16 @@ export default function LerEtiqueta() {
         };
 
         setPendingItems(prev => [newItem, ...prev]);
-        processSingleImage(tempId, dataUrl, "image/jpeg");
+
+        // Process the live captured image through the high-contrast grayscale pre-processor!
+        compressImage(dataUrl, 1200)
+          .then((preprocessedDataUrl) => {
+            processSingleImage(tempId, preprocessedDataUrl, "image/jpeg");
+          })
+          .catch((err) => {
+            console.error("Erro ao aplicar pré-processamento na captura:", err);
+            processSingleImage(tempId, dataUrl, "image/jpeg");
+          });
       }
     }
   };
@@ -894,18 +777,6 @@ export default function LerEtiqueta() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("paste")}
-              className={`flex-1 py-3 px-3 rounded-xl text-xs font-black tracking-tight transition-all duration-300 flex items-center justify-center gap-1.5 cursor-pointer ${
-                activeTab === "paste"
-                  ? "bg-[#E31837] text-white shadow-md scale-[1.01]"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
-              }`}
-            >
-              <FileCheck className="w-4 h-4 shrink-0" />
-              <span>📋 Copiar/Colar Site</span>
-            </button>
-            <button
-              type="button"
               onClick={() => setActiveTab("manual")}
               className={`flex-1 py-3 px-3 rounded-xl text-xs font-black tracking-tight transition-all duration-300 flex items-center justify-center gap-1.5 cursor-pointer ${
                 activeTab === "manual"
@@ -1084,17 +955,17 @@ export default function LerEtiqueta() {
                 </div>
               )}
 
-              {/* BRAND NEW: CHAVE API GEMINI DIRECTLY BELOW CAMERA AS REQUESTED */}
-              <div className="mx-4 mb-4 mt-2 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                <div className="flex items-center justify-between">
+              {/* BRAND NEW: CONFIGURAÇÃO DE IA AUTÔNOMA (GEMINI 3.5) DIRECTLY BELOW CAMERA AS REQUESTED */}
+              <div className="mx-4 mb-4 mt-2 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Key className="w-4 h-4 text-[#003087]" />
-                    <span className="font-bold text-xs text-slate-700 uppercase tracking-widest">Chave de API do Gemini (OCR Real)</span>
+                    <span className="font-bold text-xs text-slate-700 uppercase tracking-wider">Mecanismo de IA Autônoma (Gemini 3.5 OCR)</span>
                   </div>
                   {apiKeyStatus.hasKey ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200" title={apiKeyStatus.source === "env" ? "Variável de ambiente" : "LocalStorage"}>
-                      <Sparkles className="w-2.5 h-2.5 text-emerald-500" />
-                      {apiKeyStatus.source === "env" ? "LATAM Ativa (Env)" : "Ativa (Local)"}
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200" title={apiKeyStatus.source === "env" ? "Variável de ambiente (.env)" : "LocalStorage do navegador"}>
+                      <Sparkles className="w-2.5 h-2.5 text-emerald-500 animate-pulse" />
+                      {apiKeyStatus.source === "env" ? "Ativa via Env (Gemini 3.5)" : "Ativa via Local (Gemini 3.5)"}
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
@@ -1103,9 +974,9 @@ export default function LerEtiqueta() {
                   )}
                 </div>
 
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  Insira sua chave de API pessoal do <strong>Gemini</strong> abaixo para ativar o processamento em nuvem inteligente e precisão cirúrgica de dados de etiquetas LATAM.
-                </p>
+                <div className="text-[11px] text-slate-500 leading-relaxed border-l-2 border-[#003087] pl-2.5">
+                  Insira sua própria chave do <strong>Google Gemini 3.5</strong> para habilitar OCR real rápido e de alta precisão diretamente do seu navegador. Você pode obter uma chave gratuita no Google AI Studio.
+                </div>
 
                 <div className="flex gap-2 items-center flex-wrap sm:flex-nowrap">
                   <div className="relative flex-1 min-w-[180px]">
@@ -1133,7 +1004,7 @@ export default function LerEtiqueta() {
                     >
                       Salvar
                     </button>
-                    {apiKeyStatus.source === "localStorage" && (
+                    {(apiKeyStatus.geminiKey && apiKeyStatus.source === "localStorage") && (
                       <button
                         type="button"
                         onClick={handleClearKey}
@@ -1167,158 +1038,6 @@ export default function LerEtiqueta() {
             </div>
           )}
 
-          {/* TAB 2: COPIAR E COLAR DO SITE (EXTRATAÇÃO ONLINE 100% PRECISA) */}
-          {activeTab === "paste" && (
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col p-6 space-y-5 transition-all duration-200">
-              <div className="flex items-start gap-3 border-b border-indigo-100 pb-4">
-                <div className="p-2 bg-indigo-50 rounded-lg text-[#003087]">
-                  <FileCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-extrabold text-slate-800 text-sm">Extrator por Texto (Cópia de E-mail / Site)</h4>
-                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                    Copie as informações da bagagem ou localizador do site da companhia (LATAM), e-mail ou comprovante em PDF e cole abaixo. Nosso algoritmo inteligente fará a leitura e preenchimento garantindo 100% de exatidão!
-                  </p>
-                </div>
-              </div>
-
-              {/* TEXT AREA */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700">Cole aqui o texto copiado:</label>
-                <textarea
-                  value={pastedText}
-                  onChange={(e) => {
-                    setPastedText(e.target.value);
-                    parseTextRegex(e.target.value); // Realtime regex parsing
-                  }}
-                  rows={5}
-                  placeholder="Cole aqui... Exemplo: 'Reserva confirmada: LOC: GYW8P2. Bagagem despachada número 0095948375 no voo LA8070...'"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3.5 text-xs focus:ring-1 focus:ring-[#003087] focus:bg-white outline-none font-sans leading-relaxed"
-                />
-              </div>
-
-              {/* IA REFINEMENT OPTION */}
-              <div className="flex gap-2 justify-end">
-                <button
-                  type="button"
-                  onClick={handleAITextExtraction}
-                  disabled={isExtractingText || !pastedText.trim()}
-                  className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 text-white font-extrabold text-xs px-4 py-2 rounded-lg shadow-sm transition cursor-pointer"
-                >
-                  {isExtractingText ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Processando IA...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-                      <span>Refinar com Inteligência Artificial</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {extractTextError && (
-                <p className="text-[10px] text-red-600 font-semibold bg-red-50 border border-red-100 p-2 rounded-lg">
-                  ⚠️ {extractTextError}
-                </p>
-              )}
-
-              {/* DYNAMIC FIELD MATCHING CARD */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
-                <h5 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <Check className="w-4 h-4 text-emerald-600 font-black" />
-                  Dados Extraídos (Confirme e Edite se necessário):
-                </h5>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase">Etiqueta de Mala (Bag Tag)*</label>
-                    <input
-                      type="text"
-                      maxLength={10}
-                      value={extractedFields.bagTag}
-                      onChange={(e) => setExtractedFields(prev => ({ ...prev, bagTag: e.target.value.replace(/\D/g, "") }))}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#003087] bg-white outline-none"
-                      placeholder="10 dígitos numéricos"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase">Localizador PNR*</label>
-                    <input
-                      type="text"
-                      maxLength={6}
-                      value={extractedFields.pnr}
-                      onChange={(e) => setExtractedFields(prev => ({ ...prev, pnr: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") }))}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#E31837] bg-white outline-none"
-                      placeholder="6 alfanuméricos"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase">Código do Voo</label>
-                    <input
-                      type="text"
-                      value={extractedFields.flight}
-                      onChange={(e) => setExtractedFields(prev => ({ ...prev, flight: e.target.value.toUpperCase() }))}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs bg-white outline-none font-mono"
-                      placeholder="Ex: LA8070"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase">Cor / Tipo de Mala</label>
-                    <input
-                      type="text"
-                      value={extractedFields.corTipo}
-                      onChange={(e) => setExtractedFields(prev => ({ ...prev, corTipo: e.target.value }))}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs bg-white outline-none"
-                      placeholder="Ex: Preta pequena"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase">Situação</label>
-                    <select
-                      value={extractedFields.situacao || "PR"}
-                      onChange={(e) => setExtractedFields(prev => ({ ...prev, situacao: e.target.value as SituacaoType }))}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs bg-white outline-none font-bold text-slate-700"
-                    >
-                      {Object.entries(SITUACOES).map(([code, config]) => (
-                        <option key={code} value={code}>{config.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase">Observações</label>
-                    <input
-                      type="text"
-                      value={extractedFields.observacoes}
-                      onChange={(e) => setExtractedFields(prev => ({ ...prev, observacoes: e.target.value }))}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1 text-xs bg-white outline-none"
-                      placeholder="Alguma nota importante"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={saveExtractedToStash}
-                    disabled={!extractedFields.bagTag || !extractedFields.pnr || extractedFields.bagTag.length !== 10 || extractedFields.pnr.length !== 6 || loading}
-                    className="w-full inline-flex items-center justify-center gap-1.5 bg-[#003087] hover:bg-blue-800 disabled:bg-slate-300 text-white font-black text-xs py-2 px-4 rounded-xl shadow-sm transition cursor-pointer"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>Confirmar e Adicionar à Fila de Espera</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* TAB 3: DIGITAR DADOS MANUALMENTE (100% DE PRECISÃO REAL) */}
           {activeTab === "manual" && (
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col p-6 space-y-4 transition-all duration-200">
@@ -1340,14 +1059,14 @@ export default function LerEtiqueta() {
                   <label className="block text-xs font-bold text-slate-700">Número da Etiqueta (Bag Tag) *</label>
                   <input
                     type="text"
-                    maxLength={10}
+                    maxLength={12}
                     value={manualForm.bagTag}
-                    onChange={(e) => setManualForm(prev => ({ ...prev, bagTag: e.target.value.replace(/\D/g, "") }))}
-                    placeholder="Ex: 0095123456 (10 dígitos)"
+                    onChange={(e) => setManualForm(prev => ({ ...prev, bagTag: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") }))}
+                    placeholder="Ex: LA009512347 (Letras e números)"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-[#003087] outline-none focus:ring-1 focus:ring-[#003087] focus:bg-white"
                   />
-                  {manualForm.bagTag && manualForm.bagTag.length !== 10 && (
-                    <span className="text-[10px] text-amber-600 block pt-0.5">Faltam {10 - manualForm.bagTag.length} números</span>
+                  {manualForm.bagTag && (manualForm.bagTag.length < 8 || manualForm.bagTag.length > 12) && (
+                    <span className="text-[10px] text-amber-600 block pt-0.5">Insira entre 8 e 12 caracteres (letras e números)</span>
                   )}
                 </div>
 
@@ -1417,7 +1136,7 @@ export default function LerEtiqueta() {
                 <button
                   type="button"
                   onClick={saveManualToStash}
-                  disabled={!manualForm.bagTag || !manualForm.pnr || manualForm.bagTag.length !== 10 || manualForm.pnr.length !== 6 || loading}
+                  disabled={!manualForm.bagTag || !manualForm.pnr || manualForm.bagTag.length < 8 || manualForm.bagTag.length > 12 || manualForm.pnr.length !== 6 || loading}
                   className="flex-1 inline-flex items-center justify-center gap-1.5 bg-[#003087] hover:bg-blue-800 disabled:bg-slate-200 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-md disabled:shadow-none transition duration-150 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
@@ -1506,10 +1225,11 @@ export default function LerEtiqueta() {
                             <label className="block text-[10px] font-bold text-slate-500 uppercase">Número da Etiqueta (Bag Tag)*</label>
                             <input
                               type="text"
+                              maxLength={12}
                               value={item.bagTag}
-                              onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, bagTag: e.target.value } : pi))}
+                              onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, bagTag: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") } : pi))}
                               className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#003087] focus:ring-1 focus:ring-[#003087] outline-none"
-                              placeholder="10 dígitos numéricos"
+                              placeholder="Até 12 letras/números"
                             />
                           </div>
 
