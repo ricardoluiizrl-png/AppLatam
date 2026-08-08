@@ -24,6 +24,10 @@ export interface Bagagem {
   dataVoo: string;
   corTipo: string;
   observacoes: string;
+  scanned?: boolean;
+  generated?: boolean;
+  createdAt?: string;
+  deleted?: boolean;
 }
 
 export interface ProcessoPIR {

@@ -105,6 +105,24 @@ app.post("/api/processes", (req, res) => {
   db.push(newProcess);
   writeDB(db);
 
+  // Update central baggages DB to mark them as generated
+  try {
+    const allBags = readBagDB();
+    const bagIdsToMark = bagagens.map((b: any) => b.id?.toString());
+    let changed = false;
+    allBags.forEach((b: any) => {
+      if (bagIdsToMark.includes(b.id?.toString())) {
+        b.generated = true;
+        changed = true;
+      }
+    });
+    if (changed) {
+      writeBagDB(allBags);
+    }
+  } catch (err) {
+    console.error("Erro ao atualizar bagagens para geradas:", err);
+  }
+
   res.status(201).json(newProcess);
 });
 

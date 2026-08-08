@@ -22,6 +22,8 @@ interface AppLayoutProps {
   setActiveTab: (tab: string) => void;
   activeUser: { nome: string; matricula: string };
   onActiveUserChange: (user: { nome: string; matricula: string }) => void;
+  onLogout?: () => void;
+  onReplaySplash?: () => void;
 }
 
 export default function AppLayout({ 
@@ -29,7 +31,9 @@ export default function AppLayout({
   activeTab, 
   setActiveTab, 
   activeUser, 
-  onActiveUserChange 
+  onActiveUserChange,
+  onLogout,
+  onReplaySplash
 }: AppLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -200,23 +204,36 @@ export default function AppLayout({
               </div>
             </div>
           ) : (
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="text-[10px] uppercase tracking-widest text-blue-300 font-extrabold">Responsável Ativo (Filtro):</div>
-                <div className="text-sm text-white font-bold mt-1 max-w-[130px] truncate" title={activeUser.nome}>
-                  {activeUser.nome}
+            <div>
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-blue-300 font-extrabold">Responsável Ativo (Filtro):</div>
+                  <div className="text-sm text-white font-bold mt-1 max-w-[130px] truncate" title={activeUser.nome}>
+                    {activeUser.nome}
+                  </div>
+                  <div className="text-[10px] text-blue-400 font-mono mt-0.5">
+                    Matrícula: {activeUser.matricula}
+                  </div>
                 </div>
-                <div className="text-[10px] text-blue-400 font-mono mt-0.5">
-                  Matrícula: {activeUser.matricula}
-                </div>
+                <button 
+                  onClick={() => setIsEditing(true)}
+                  className="p-1 px-2 rounded bg-blue-900/50 hover:bg-blue-900 text-slate-200 hover:text-white transition duration-150 flex items-center gap-1 text-[10px] font-bold uppercase cursor-pointer"
+                  title="Trocar operador a qualquer momento"
+                >
+                  <Edit2 className="w-3 h-3" /> Mudar
+                </button>
               </div>
-              <button 
-                onClick={() => setIsEditing(true)}
-                className="p-1 px-2 rounded bg-blue-900/50 hover:bg-blue-900 text-slate-200 hover:text-white transition duration-150 flex items-center gap-1 text-[10px] font-bold uppercase cursor-pointer"
-                title="Trocar operador a qualquer momento"
-              >
-                <Edit2 className="w-3 h-3" /> Mudar
-              </button>
+
+              {onLogout && (
+                <button
+                  id="btn-logout-sidebar"
+                  onClick={onLogout}
+                  className="w-full mt-3 py-1.5 px-3 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-200 hover:text-white rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sair do Sistema</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -254,6 +271,29 @@ export default function AppLayout({
                 className="h-3.5 object-contain"
               />
             </div>
+
+            {onReplaySplash && (
+              <button
+                id="btn-replay-splash"
+                onClick={onReplaySplash}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-50 text-[#002A8F] hover:bg-blue-100 rounded-lg text-xs font-bold transition cursor-pointer border border-blue-200"
+                title="Ver tela de abertura animada"
+              >
+                <span>Abertura</span>
+              </button>
+            )}
+
+            {onLogout && (
+              <button
+                id="btn-logout-header"
+                onClick={onLogout}
+                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                title="Sair do sistema"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sair</span>
+              </button>
+            )}
           </div>
         </header>
 

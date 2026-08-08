@@ -14,7 +14,12 @@ import {
   Sparkles,
   ExternalLink,
   ChevronUp,
-  UserCheck
+  UserCheck,
+  History,
+  Undo2,
+  ArchiveRestore,
+  AlertTriangle,
+  FolderCheck
 } from "lucide-react";
 import { Funcionario, Bagagem, SituacaoType, SITUACOES } from "../types";
 import { gerarHtmlEmail } from "../utils/gerarHtmlEmail";
@@ -38,6 +43,13 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   // Individual row IDs chosen to compile into the generated PIR email file
   const [selectedBagIds, setSelectedBagIds] = useState<string[]>([]);
   const [loadingBags, setLoadingBags] = useState(false);
+
+  // Expired / Deleted bags (Trash bin)
+  const [expiredBags, setExpiredBags] = useState<Bagagem[]>([]);
+  const [selectedExpiredBagIds, setSelectedExpiredBagIds] = useState<string[]>([]);
+  const [loadingExpired, setLoadingExpired] = useState(false);
+  const [lixeiraExpanded, setLixeiraExpanded] = useState(false);
+  const [processedExpanded, setProcessedExpanded] = useState(true);
 
   // Geração / Output States
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -74,8 +86,9 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       if (res.ok) {
         const data = await res.json();
         setBagagens(data);
-        // Pre-select all baggages for process creation by default
-        setSelectedBagIds(data.map((item: any) => item.id));
+        // Pre-select pending (not generated) baggages for process creation by default
+        const pending = data.filter((item: any) => !item.generated);
+        setSelectedBagIds(pending.map((item: any) => item.id));
       }
     } catch (e) {
       console.error("Erro ao sincronizar bagagens:", e);
@@ -84,8 +97,27 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
     }
   };
 
+  const fetchExpiredBags = async () => {
+    try {
+      setLoadingExpired(true);
+      const res = await apiFetch("/api/baggages/expired");
+      if (res.ok) {
+        const data = await res.json();
+        setExpiredBags(data);
+        // Clean up selected IDs that are no longer in the trash
+        const validIds = data.map((b: any) => b.id);
+        setSelectedExpiredBagIds(prev => prev.filter(id => validIds.includes(id)));
+      }
+    } catch (e) {
+      console.error("Erro ao carregar lixeira:", e);
+    } finally {
+      setLoadingExpired(false);
+    }
+  };
+
   useEffect(() => {
     fetchBaggages();
+    fetchExpiredBags();
   }, []);
 
   // Add empty baggage line to server & state
@@ -154,6 +186,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       if (res.ok) {
         setBagagens((prev) => prev.filter((b) => b.id !== id));
         setSelectedBagIds((prev) => prev.filter((bid) => bid !== id));
+        await fetchExpiredBags(); // Refresh lixeira lists too
       }
     } catch (err) {
       console.error("Erro ao arquivar bagagem:", err);
@@ -169,12 +202,152 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
     }
   };
 
-  // Select all or deselect all
+  // Separation of active baggages
+  const pendingBags = bagagens.filter(b => !b.generated);
+  const processedBags = bagagens.filter(b => b.generated);
+
+  // Toggle selection of pending items
+  const handleToggleSelectAllPending = () => {
+    const pendingIds = pendingBags.map(b => b.id);
+    const allSelectedPending = pendingBags.length > 0 && pendingIds.every(id => selectedBagIds.includes(id));
+    if (allSelectedPending) {
+      setSelectedBagIds(prev => prev.filter(id => !pendingIds.includes(id)));
+    } else {
+      setSelectedBagIds(prev => {
+        const others = prev.filter(id => !pendingIds.includes(id));
+        return [...others, ...pendingIds];
+      });
+    }
+  };
+
+  // Toggle selection of processed items
+  const handleToggleSelectAllProcessed = () => {
+    const processedIds = processedBags.map(b => b.id);
+    const allSelectedProcessed = processedBags.length > 0 && processedIds.every(id => selectedBagIds.includes(id));
+    if (allSelectedProcessed) {
+      setSelectedBagIds(prev => prev.filter(id => !processedIds.includes(id)));
+    } else {
+      setSelectedBagIds(prev => {
+        const others = prev.filter(id => !processedIds.includes(id));
+        return [...others, ...processedIds];
+      });
+    }
+  };
+
+  // Select all overall active bags
   const handleToggleSelectAll = () => {
     if (selectedBagIds.length === bagagens.length) {
       setSelectedBagIds([]);
     } else {
       setSelectedBagIds(bagagens.map((b) => b.id));
+    }
+  };
+
+  // Restore bag from recycle bin
+  const handleRestoreBag = async (id: string) => {
+    try {
+      const res = await apiFetch(`/api/baggages/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restore: true })
+      });
+      if (res.ok) {
+        await fetchBaggages();
+        await fetchExpiredBags();
+      }
+    } catch (err) {
+      console.error("Erro ao restaurar bagagem:", err);
+    }
+  };
+
+  // Permanently delete a baggage
+  const handlePermanentDeleteBag = async (id: string) => {
+    if (!window.confirm("⚠️ Tem certeza que deseja EXCLUIR DEFINITIVAMENTE esta bagagem? Esta ação não pode ser desfeita.")) return;
+    try {
+      const res = await apiFetch(`/api/baggages/${id}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        await fetchExpiredBags();
+      }
+    } catch (err) {
+      console.error("Erro ao excluir bagagem permanentemente:", err);
+    }
+  };
+
+  // Empty the recycle bin
+  const handleEmptyTrash = async () => {
+    if (expiredBags.length === 0) return;
+    if (!window.confirm(`⚠️ Tem certeza que deseja ESVAZIAR A LIXEIRA? Todas as ${expiredBags.length} bagagens serão excluídas de forma permanente!`)) return;
+    try {
+      for (const b of expiredBags) {
+        await apiFetch(`/api/baggages/${b.id}`, {
+          method: "DELETE"
+        });
+      }
+      await fetchExpiredBags();
+    } catch (err) {
+      console.error("Erro ao esvaziar lixeira:", err);
+    }
+  };
+
+  // Toggle selection for a single expired bag
+  const handleToggleExpiredBagSelect = (id: string) => {
+    if (selectedExpiredBagIds.includes(id)) {
+      setSelectedExpiredBagIds(selectedExpiredBagIds.filter((i) => i !== id));
+    } else {
+      setSelectedExpiredBagIds([...selectedExpiredBagIds, id]);
+    }
+  };
+
+  // Toggle selection for all expired bags
+  const handleToggleSelectAllExpired = () => {
+    if (selectedExpiredBagIds.length === expiredBags.length) {
+      setSelectedExpiredBagIds([]);
+    } else {
+      setSelectedExpiredBagIds(expiredBags.map((b) => b.id));
+    }
+  };
+
+  // Restore selected expired bags (mass recovery)
+  const handleRestoreSelectedBags = async () => {
+    if (selectedExpiredBagIds.length === 0) return;
+    try {
+      setLoadingExpired(true);
+      for (const id of selectedExpiredBagIds) {
+        await apiFetch(`/api/baggages/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ restore: true })
+        });
+      }
+      setSelectedExpiredBagIds([]);
+      await fetchBaggages();
+      await fetchExpiredBags();
+    } catch (err) {
+      console.error("Erro ao restaurar bagagens selecionadas:", err);
+    } finally {
+      setLoadingExpired(false);
+    }
+  };
+
+  // Permanently delete selected expired bags (mass deletion)
+  const handleDeleteSelectedBags = async () => {
+    if (selectedExpiredBagIds.length === 0) return;
+    if (!window.confirm(`⚠️ Tem certeza que deseja EXCLUIR DEFINITIVAMENTE as ${selectedExpiredBagIds.length} bagagens selecionadas? Esta ação não pode ser desfeita.`)) return;
+    try {
+      setLoadingExpired(true);
+      for (const id of selectedExpiredBagIds) {
+        await apiFetch(`/api/baggages/${id}`, {
+          method: "DELETE"
+        });
+      }
+      setSelectedExpiredBagIds([]);
+      await fetchExpiredBags();
+    } catch (err) {
+      console.error("Erro ao excluir bagagens selecionadas:", err);
+    } finally {
+      setLoadingExpired(false);
     }
   };
 
@@ -460,18 +633,25 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
 
 
-      {/* SEÇÃO 4: LISTA DE COBRANÇAS DE BAGAGENS (MAIN ROWS GRID) */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      {/* SEÇÃO 4: DUAS TABELAS DE EXECUÇÃO (PENDENTES VS PROCESSADAS) */}
+      
+      {/* SEÇÃO 4A: ETIQUETAS PENDENTES (AINDA NÃO GERADAS EM ARQUIVO) */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm space-y-px">
+        <div className="bg-gradient-to-r from-[#003087]/5 to-slate-50 border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-extrabold text-slate-800">Tabela de Bagagens em Execução</h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Total ativo no painel: {bagagens.length} volumes | Selecionados para compor lote: {selectedBagIds.length} volumes</p>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+              <h3 className="text-sm font-extrabold text-slate-800">Etiquetas Pendentes</h3>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Ainda não foram geradas no arquivo CSV | Total ativo pendente: <strong>{pendingBags.length}</strong> volumes | Selecionados: <strong>{pendingBags.filter(b => selectedBagIds.includes(b.id)).length}</strong> volumes
+            </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 w-full sm:w-auto justify-end">
             <button
               type="button"
               onClick={fetchBaggages}
-              className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition"
+              className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition cursor-pointer"
               title="Sincronizar com Servidor"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loadingBags ? 'animate-spin' : ''}`} />
@@ -482,13 +662,12 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
               onClick={handleAddBagagem}
               className="inline-flex items-center gap-1.5 bg-[#003087] hover:bg-blue-950 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" /> Adicionar Bagagem
+              <Plus className="w-3.5 h-3.5" /> Adicionar Bagagem Manual
             </button>
           </div>
         </div>
 
-        {/* INPUTS TIPO TABELA */}
-        {bagagens.length > 0 ? (
+        {pendingBags.length > 0 ? (
           <div className="overflow-x-auto min-w-full">
             <table className="min-w-full border-collapse border border-slate-100 text-xs text-left">
               <thead>
@@ -496,10 +675,10 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                   <th className="px-3 py-3 w-10 text-center">
                     <input 
                       type="checkbox" 
-                      checked={selectedBagIds.length === bagagens.length && bagagens.length > 0} 
-                      onChange={handleToggleSelectAll}
+                      checked={pendingBags.length > 0 && pendingBags.every(b => selectedBagIds.includes(b.id))} 
+                      onChange={handleToggleSelectAllPending}
                       className="rounded text-[#003087] border-slate-300 focus:ring-[#003087] h-4 w-4 cursor-pointer" 
-                      title="Selecionar todos os volumes"
+                      title="Selecionar todas as pendentes"
                     />
                   </th>
                   <th className="px-2 py-3 w-48">Situação *</th>
@@ -513,7 +692,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {bagagens.map((bag) => {
+                {pendingBags.map((bag) => {
                   const isChecked = selectedBagIds.includes(bag.id);
                   return (
                     <tr 
@@ -623,8 +802,8 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                         <button
                           type="button"
                           onClick={() => handleRemoveBagagem(bag.id)}
-                          className="text-slate-400 hover:text-[#E31837] p-1.5 hover:bg-rose-50 rounded-lg transition"
-                          title="Remover bagagem"
+                          className="text-slate-400 hover:text-[#E31837] p-1.5 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                          title="Remover bagagem (enviar para lixeira)"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -636,8 +815,367 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
             </table>
           </div>
         ) : (
-          <div className="text-center py-10 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-slate-500 text-xs mx-6 my-6">
-            🧳 Nenhuma bagagem escalada no formulário de conciliação. Leia etiquetas na tela "Ler Etiqueta" ou clique em "Adicionar Bagagem" acima.
+          <div className="text-center py-10 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-slate-500 text-xs mx-6 my-6 leading-relaxed">
+            🧳 Nenhuma bagagem pendente de geração de arquivo. <br />
+            Insira novas etiquetas na tela <strong className="text-[#003087]">"Ler Etiqueta"</strong> ou clique em <strong className="text-[#003087]">"Adicionar Bagagem Manual"</strong> acima.
+          </div>
+        )}
+      </div>
+
+      {/* SEÇÃO 4B: ETIQUETAS PROCESSADAS (JÁ GERADAS EM ARQUIVO / LOTES) */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <button
+          type="button"
+          onClick={() => setProcessedExpanded(!processedExpanded)}
+          className="w-full bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center justify-between hover:bg-slate-100/75 transition-all text-left cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+            <h3 className="text-sm font-extrabold text-slate-800">
+              Etiquetas Processadas (Lotes Gerados)
+            </h3>
+            <span className="text-[10px] uppercase font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded ml-2">
+              {processedBags.length} volumes
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-slate-400">
+            <span className="text-xs font-semibold text-slate-500">
+              {processedExpanded ? "Ocultar tabela" : "Mostrar tabela"}
+            </span>
+            {processedExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        </button>
+
+        {processedExpanded && (
+          <div className="p-0 animate-fade-in">
+            <p className="text-[11px] text-slate-500 px-6 pt-4 pb-2 leading-relaxed">
+              ⚠️ Estas bagagens já foram exportadas para um ou mais arquivos CSV da Receita Federal. Você ainda pode selecioná-las se precisar gerar um novo lote unificado com elas!
+            </p>
+            {processedBags.length > 0 ? (
+              <div className="overflow-x-auto min-w-full">
+                <table className="min-w-full border-collapse border border-slate-100 text-xs text-left">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-extrabold uppercase text-[10px] tracking-wider select-none">
+                      <th className="px-3 py-3 w-10 text-center">
+                        <input 
+                          type="checkbox" 
+                          checked={processedBags.length > 0 && processedBags.every(b => selectedBagIds.includes(b.id))} 
+                          onChange={handleToggleSelectAllProcessed}
+                          className="rounded text-[#003087] border-slate-300 focus:ring-[#003087] h-4 w-4 cursor-pointer" 
+                          title="Selecionar todas as processadas"
+                        />
+                      </th>
+                      <th className="px-2 py-3 w-36">Status do Lote</th>
+                      <th className="px-2 py-3 w-48">Situação</th>
+                      <th className="px-2 py-3 w-36">Etiqueta (Tag)</th>
+                      <th className="px-2 py-3 w-28">Reserva (PNR)</th>
+                      <th className="px-2 py-3 w-24">Voo Origem</th>
+                      <th className="px-2 py-3 w-24">Data Voo</th>
+                      <th className="px-2 py-3 w-36">Cor e Tipo de Mala</th>
+                      <th className="px-2 py-3">Observações</th>
+                      <th className="px-2 py-3 text-center w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {processedBags.map((bag) => {
+                      const isChecked = selectedBagIds.includes(bag.id);
+                      return (
+                        <tr 
+                          key={bag.id} 
+                          className={`hover:bg-slate-50/50 transition-colors ${
+                            isChecked ? "bg-[#003087]/[0.02]" : "bg-white opacity-85"
+                          }`}
+                        >
+                          {/* Checkbox column */}
+                          <td className="px-3 py-3 text-center">
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleBagSelect(bag.id)}
+                              className="rounded text-[#003087] border-slate-300 focus:ring-[#003087] h-4 w-4 cursor-pointer"
+                            />
+                          </td>
+
+                          {/* Lote Status badge */}
+                          <td className="px-2 py-2">
+                            <span className="inline-flex items-center gap-1 text-[9px] font-black tracking-wider uppercase bg-emerald-50 text-emerald-800 px-2 py-1 rounded border border-emerald-150">
+                              <FolderCheck className="w-2.5 h-2.5" /> CSV Gerado
+                            </span>
+                          </td>
+
+                          {/* Situacao SELECT */}
+                          <td className="px-2 py-2">
+                            <select
+                              value={bag.situacao}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "situacao", e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-[#003087] outline-none font-semibold text-slate-500 bg-slate-50"
+                            >
+                              {Object.entries(SITUACOES).map(([kode, val]) => (
+                                <option key={kode} value={kode}>
+                                  {val.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+
+                          {/* Tag Number */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={bag.etiqueta}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "etiqueta", e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-[#003087] outline-none font-mono font-bold text-slate-500 bg-slate-50"
+                              placeholder="Ex: 0095843920"
+                              maxLength={10}
+                            />
+                          </td>
+
+                          {/* PNR Code */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={bag.pnr}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "pnr", e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-[#E31837] outline-none font-mono font-bold text-slate-500 bg-slate-50 uppercase"
+                              placeholder="Ex: LHMQ9Z"
+                              maxLength={6}
+                            />
+                          </td>
+
+                          {/* Flight orig */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={bag.vooOrigem || ""}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "vooOrigem", e.target.value.toUpperCase())}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-400 outline-none font-mono text-slate-500 bg-slate-50"
+                              placeholder="Ex: LA8070"
+                            />
+                          </td>
+
+                          {/* Data Voo */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={bag.dataVoo || ""}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "dataVoo", e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-400 outline-none text-slate-500 bg-slate-50 animate-duration-200"
+                              placeholder="Ex: 07/06/2026"
+                            />
+                          </td>
+
+                          {/* Cor/Tipo */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={bag.corTipo || ""}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "corTipo", e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-400 outline-none text-slate-500 bg-slate-50"
+                              placeholder="Ex: Mala rodinha preta"
+                            />
+                          </td>
+
+                          {/* Obs */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="text"
+                              value={bag.observacoes || ""}
+                              onChange={(e) => handleUpdateBagagem(bag.id, "observacoes", e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-400 outline-none text-slate-500 bg-slate-50"
+                              placeholder="Obs adicionais"
+                            />
+                          </td>
+
+                          {/* Rem button */}
+                          <td className="px-2 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveBagagem(bag.id)}
+                              className="text-slate-400 hover:text-[#E31837] p-1.5 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              title="Remover bagagem (enviar para lixeira)"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-6 bg-slate-50 border border-dashed border-slate-150 rounded-xl text-slate-400 text-xs mx-6 my-6">
+                Nenhum volume foi exportado para arquivo ainda nesta sessão.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SEÇÃO 4C: LIXEIRA & HISTÓRICO DE EXCLUSÃO/EXPIRAÇÃO (>24h) */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <button
+          type="button"
+          onClick={() => setLixeiraExpanded(!lixeiraExpanded)}
+          className="w-full bg-[#E31837]/5 border-b border-slate-200 px-6 py-4 flex items-center justify-between hover:bg-[#E31837]/10 transition-all text-left cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <Trash2 className="w-4 h-4 text-[#E31837]" />
+            <h3 className="text-sm font-extrabold text-[#E31837]">
+              Lixeira de Bagagens (Expiradas & Excluídas)
+            </h3>
+            <span className="text-[10px] uppercase font-bold bg-[#E31837]/15 text-[#E31837] px-2.5 py-0.5 rounded ml-2">
+              {expiredBags.length} volumes
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-[#E31837]/60">
+            <span className="text-xs font-semibold">
+              {lixeiraExpanded ? "Ocultar lixeira" : "Visualizar lixeira para recuperação"}
+            </span>
+            {lixeiraExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        </button>
+
+        {lixeiraExpanded && (
+          <div className="p-0 animate-fade-in">
+            <div className="bg-amber-50/50 border-b border-amber-100 p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+              <div className="flex gap-2">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-900 leading-normal max-w-2xl text-left">
+                  Conforme as especificações operacionais, as bagagens lidas vão <strong>automaticamente para a lixeira após 24 horas</strong> da leitura para manter o painel de conciliação limpo. Você pode recuperar qualquer etiqueta quando quiser para que ela volte ao painel ativo por mais 24 horas!
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {selectedExpiredBagIds.length > 0 ? (
+                  <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs">
+                    <span className="text-[10px] font-extrabold text-slate-600">
+                      {selectedExpiredBagIds.length} selecionados:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleRestoreSelectedBags}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase px-2.5 py-1.5 rounded-md transition cursor-pointer flex items-center gap-1 shadow-xs"
+                    >
+                      <Undo2 className="w-3 h-3" /> Restaurar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteSelectedBags}
+                      className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase px-2.5 py-1.5 rounded-md transition cursor-pointer shadow-xs"
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                ) : (
+                  expiredBags.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleEmptyTrash}
+                      className="bg-rose-100 hover:bg-rose-200 text-rose-800 text-[10px] font-black uppercase px-3 py-1.5 rounded-lg border border-rose-200 transition shrink-0 cursor-pointer"
+                    >
+                      ✕ Esvaziar Lixeira
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+
+            {expiredBags.length > 0 ? (
+              <div className="overflow-x-auto min-w-full">
+                <table className="min-w-full border-collapse border border-slate-100 text-xs text-left bg-slate-50/20">
+                  <thead>
+                    <tr className="bg-slate-100/50 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider select-none">
+                      <th className="px-3 py-3 w-10 text-center">
+                        <input 
+                          type="checkbox" 
+                          checked={expiredBags.length > 0 && expiredBags.every(b => selectedExpiredBagIds.includes(b.id))} 
+                          onChange={handleToggleSelectAllExpired}
+                          className="rounded text-rose-600 border-slate-300 focus:ring-rose-500 h-4 w-4 cursor-pointer" 
+                          title="Selecionar todas as expiradas"
+                        />
+                      </th>
+                      <th className="px-4 py-3 w-36">Motivo</th>
+                      <th className="px-2 py-3 w-40">Situação</th>
+                      <th className="px-2 py-3 w-36">Etiqueta (Tag)</th>
+                      <th className="px-2 py-3 w-28">Reserva (PNR)</th>
+                      <th className="px-2 py-3 w-28">Voo</th>
+                      <th className="px-2 py-3">Mala / Observações</th>
+                      <th className="px-4 py-3 text-right w-52">Ações de Recuperação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {expiredBags.map((bag) => {
+                      const createdTime = new Date(bag.createdAt || bag.timestamp || "").getTime();
+                      const isExpired = (Date.now() - createdTime) > 24 * 60 * 60 * 1000;
+                      const isChecked = selectedExpiredBagIds.includes(bag.id);
+                      return (
+                        <tr key={bag.id} className={`hover:bg-slate-100/30 transition-colors ${isChecked ? 'bg-rose-500/5' : 'bg-white'}`}>
+                          <td className="px-3 py-3 text-center">
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleExpiredBagSelect(bag.id)}
+                              className="rounded text-rose-600 border-slate-300 focus:ring-rose-500 h-4 w-4 cursor-pointer"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            {isExpired ? (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded">
+                                <Clock className="w-2.5 h-2.5 text-amber-600" /> Expirado &gt;24h
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-rose-50 text-rose-800 border border-rose-200 px-2 py-0.5 rounded">
+                                <Trash2 className="w-2.5 h-2.5 text-rose-600" /> Excluído Manual
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-2 py-3 font-semibold text-slate-600">
+                            {SITUACOES[bag.situacao]?.label || bag.situacao}
+                          </td>
+                          <td className="px-2 py-3 font-mono font-black text-slate-700">
+                            {bag.etiqueta || "—"}
+                          </td>
+                          <td className="px-2 py-3 font-mono font-extrabold text-slate-700">
+                            {bag.pnr || "—"}
+                          </td>
+                          <td className="px-2 py-3 text-slate-500 font-mono">
+                            {bag.vooOrigem || "—"}
+                          </td>
+                          <td className="px-2 py-3 text-slate-500 leading-tight">
+                            <div className="font-semibold">{bag.corTipo || "Sem descrição"}</div>
+                            <div className="text-[10px] opacity-80">{bag.observacoes}</div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleRestoreBag(bag.id)}
+                                className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg border border-emerald-200 transition cursor-pointer"
+                                title="Recuperar esta etiqueta e reinserir na fila por mais 24h"
+                              >
+                                <Undo2 className="w-3.5 h-3.5" /> Restaurar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePermanentDeleteBag(bag.id)}
+                                className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-800 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border border-rose-150 transition cursor-pointer"
+                                title="Excluir de forma permanente"
+                              >
+                                Excluir
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-slate-400 text-xs leading-relaxed">
+                🗑️ A lixeira está limpa. Nenhuma etiqueta expirada ou excluída no momento.
+              </div>
+            )}
           </div>
         )}
       </div>

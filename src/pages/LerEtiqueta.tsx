@@ -34,7 +34,22 @@ export interface PendingItem {
   observacoes: string;
   situacao?: SituacaoType;
   isQuotaSimulated?: boolean;
+  imageDataUrl?: string;
+  imageMime?: string;
+  validationWarning?: string | null;
 }
+
+// Check if a baggage tag conforms to Standard IATA Resolution 740 (exactly 10 digits or 9 digits)
+export const isIataTagValid = (tag: string): boolean => {
+  const cleanTag = tag.replace(/[^0-9]/g, "").trim();
+  return /^\d{10}$/.test(cleanTag) || /^\d{9}$/.test(cleanTag);
+};
+
+// Check if a reservation locator (PNR) is consistent (exactly 6 alphanumeric characters)
+export const isPnrValid = (pnr: string): boolean => {
+  const cleanPnr = pnr.toUpperCase().replace(/[^A-Za-z0-9]/g, "").trim();
+  return /^[A-Z0-9]{6}$/.test(cleanPnr);
+};
 
 const compressImage = (base64Str: string, maxDimension = 1200): Promise<string> => {
   return new Promise((resolve) => {
@@ -485,6 +500,18 @@ export default function LerEtiqueta() {
 
   // Process selected or captured image
   const processSingleImage = async (tempId: string, base64String: string, mime: string) => {
+    // Proactively save image data in state for retry upon failures
+    setPendingItems(prev => prev.map(item => {
+      if (item.id === tempId) {
+        return {
+          ...item,
+          imageDataUrl: base64String,
+          imageMime: mime
+        };
+      }
+      return item;
+    }));
+
     try {
       const activeConf = getActiveGeminiKeyStatus();
       const headers: Record<string, string> = { 
@@ -513,18 +540,48 @@ export default function LerEtiqueta() {
 
       const parsedOcr = await response.json();
 
+      const rawTag = parsedOcr.bagTag || "";
+      const rawPnr = parsedOcr.pnr || "";
+      
+      const tagValid = isIataTagValid(rawTag);
+      const pnrVal = isPnrValid(rawPnr);
+
+      let validationWarningMsg: string | null = null;
+      if (!tagValid || !pnrVal) {
+        const issues: string[] = [];
+        if (!tagValid) {
+          issues.push(`Número de Etiqueta ("${rawTag || 'não lido'}") fora do padrão decimal de 10 dígitos (IATA Res 740)`);
+        }
+        if (!pnrVal) {
+          issues.push(`Localizador PNR ("${rawPnr || 'não lido'}") fora do padrão de 6 caracteres alfanuméricos`);
+        }
+        validationWarningMsg = issues.join(". ");
+        
+        try {
+          if (typeof window !== "undefined") {
+            // Trigger browser-native warning alert to immediately instruct user of inconsistency
+            alert(`⚠️ Atenção: A leitura da etiqueta pelo Gemini foi concluída, mas os dados não seguem o padrão IATA!\n\nMotivos identificados:\n- ${issues.join("\n- ")}\n\nVocê pode corrigir as informações manualmente logo abaixo.`);
+          }
+        } catch (e) {
+          console.error("Falha ao abrir o alerta", e);
+        }
+      }
+
       setPendingItems(prev => prev.map(item => {
         if (item.id === tempId) {
           return {
             ...item,
             loading: false,
-            bagTag: parsedOcr.bagTag || "",
-            pnr: parsedOcr.pnr || "",
+            bagTag: rawTag,
+            pnr: rawPnr,
             flight: parsedOcr.flight || parsedOcr.flightCode || "",
             corTipo: parsedOcr.cor_tipo || parsedOcr.corTipo || "",
             situacao: parsedOcr.situacao || "PR",
             isQuotaSimulated: parsedOcr.quotaFallbackActive || false,
-            error: null
+            imageDataUrl: base64String,
+            imageMime: mime,
+            error: null,
+            validationWarning: validationWarningMsg
           };
         }
         return item;
@@ -546,12 +603,25 @@ export default function LerEtiqueta() {
           return {
             ...item,
             loading: false,
+            imageDataUrl: base64String,
+            imageMime: mime,
             error: customErr
           };
         }
         return item;
       }));
     }
+  };
+
+  // Handle Retrying the Gemini OCR for a specific pending card
+  const handleRetryOCR = async (item: PendingItem) => {
+    if (!item.imageDataUrl || !item.imageMime) return;
+    
+    // Set loading to true and clear error
+    setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, loading: true, error: null } : pi));
+    
+    // Call processSingleImage
+    await processSingleImage(item.id, item.imageDataUrl, item.imageMime);
   };
 
   // Frame Capture from Live Stream
@@ -641,6 +711,21 @@ export default function LerEtiqueta() {
   const handleSaveToStash = async (item: PendingItem) => {
     if (!item.bagTag || !item.pnr) return;
 
+    const isTagOk = isIataTagValid(item.bagTag);
+    const isPnrOk = isPnrValid(item.pnr);
+    
+    if (!isTagOk || !isPnrOk) {
+      if (typeof window !== "undefined") {
+        const confirmSave = window.confirm(
+          "⚠️ Os dados inseridos não estão totalmente em conformidade com o padrão IATA!\n\n" +
+          "• Etiqueta: " + (isTagOk ? "Válida (9 a 10 dígitos) ✓" : `Inválida ("${item.bagTag}" deve possuir de 9 a 10 dígitos numéricos) ✗`) + "\n" +
+          "• Reserva PNR: " + (isPnrOk ? "Válida (6 alfanuméricos) ✓" : `Inválida ("${item.pnr}" deve possuir 6 alfanuméricos) ✗`) + "\n\n" +
+          "Deseja salvar na fila mesmo assim com estes valores?"
+        );
+        if (!confirmSave) return;
+      }
+    }
+
     const newItem = {
       etiqueta: item.bagTag,
       pnr: item.pnr,
@@ -648,7 +733,8 @@ export default function LerEtiqueta() {
       corTipo: item.corTipo,
       situacao: item.situacao || "PR",
       dataVoo: new Date().toLocaleDateString("pt-BR"),
-      observacoes: item.observacoes || ""
+      observacoes: item.observacoes || "",
+      scanned: true
     };
 
     try {
@@ -677,6 +763,17 @@ export default function LerEtiqueta() {
     const validItems = pendingItems.filter(p => !p.loading && !p.error && p.bagTag && p.pnr);
     if (validItems.length === 0) return;
 
+    const hasInconsistentField = validItems.some(p => !isIataTagValid(p.bagTag) || !isPnrValid(p.pnr));
+    if (hasInconsistentField) {
+      if (typeof window !== "undefined") {
+        const confirmBatch = window.confirm(
+          "⚠️ Algumas das etiquetas da fila apresentam formatos de etiqueta ou PNR fora das especificações padrão da IATA.\n\n" +
+          "Deseja salvar todas de uma vez mesmo assim?"
+        );
+        if (!confirmBatch) return;
+      }
+    }
+
     try {
       // Show screen spinner
       setLoading(true);
@@ -688,7 +785,8 @@ export default function LerEtiqueta() {
           corTipo: item.corTipo,
           situacao: item.situacao || "PR",
           dataVoo: new Date().toLocaleDateString("pt-BR"),
-          observacoes: item.observacoes || ""
+          observacoes: item.observacoes || "",
+          scanned: true
         };
 
         const res = await apiFetch("/api/baggages", {
@@ -1177,6 +1275,8 @@ export default function LerEtiqueta() {
               <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
                 {pendingItems.map((item) => {
                   const valResult = checkValidation(item.bagTag, item.pnr);
+                  const isTagOk = isIataTagValid(item.bagTag);
+                  const isPnrOk = isPnrValid(item.pnr);
                   
                   return (
                     <div 
@@ -1212,9 +1312,31 @@ export default function LerEtiqueta() {
                           <p className="text-xs text-slate-500 font-semibold animate-pulse">Lendo etiqueta com IA...</p>
                         </div>
                       ) : item.error ? (
-                        <div className="bg-red-50 border border-red-100 rounded-lg p-3 text-red-800 text-[11px] text-left mb-2">
-                          <p className="font-bold">Falha no Escaneamento</p>
-                          <p className="mt-0.5 text-slate-600 leading-normal">{item.error}</p>
+                        <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 text-left mb-3 space-y-2.5">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-[#E31837] shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-bold text-xs text-red-900">Falha na Leitura com o Gemini</p>
+                              <p className="mt-0.5 text-[11px] text-red-700 leading-normal">{item.error}</p>
+                            </div>
+                          </div>
+                          
+                          {item.imageDataUrl && (
+                            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-red-200/50">
+                              <button
+                                type="button"
+                                onClick={() => handleRetryOCR(item)}
+                                className="inline-flex items-center gap-1.5 bg-[#E31837] hover:bg-black text-white font-extrabold text-[11px] px-3 py-1.5 rounded-lg shadow-sm transition active:scale-95 cursor-pointer"
+                              >
+                                <RefreshCw className="w-3 h-3 animate-none" />
+                                Reenviar Foto Novamente
+                              </button>
+                              
+                              <span className="text-[10px] text-slate-500 font-medium italic">
+                                Tente reenviar para sincronizar sem sair da tela
+                              </span>
+                            </div>
+                          )}
                         </div>
                       ) : null}
 
@@ -1228,8 +1350,12 @@ export default function LerEtiqueta() {
                               maxLength={12}
                               value={item.bagTag}
                               onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, bagTag: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") } : pi))}
-                              className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#003087] focus:ring-1 focus:ring-[#003087] outline-none"
-                              placeholder="Até 12 letras/números"
+                              className={`mt-1 w-full border rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider outline-none transition-colors ${
+                                item.bagTag 
+                                  ? (isTagOk ? "border-emerald-300 focus:ring-1 focus:ring-emerald-500 bg-emerald-50/10 text-emerald-950" : "border-amber-300 focus:ring-1 focus:ring-amber-500 bg-amber-50/15 text-amber-950")
+                                  : "border-slate-300 focus:ring-1 focus:ring-[#003087] text-slate-900"
+                              }`}
+                              placeholder="Até 10 dígitos numéricos"
                             />
                           </div>
 
@@ -1240,7 +1366,11 @@ export default function LerEtiqueta() {
                               maxLength={6}
                               value={item.pnr}
                               onChange={(e) => setPendingItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, pnr: e.target.value.toUpperCase() } : pi))}
-                              className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider text-[#E31837] focus:ring-1 focus:ring-[#E31837] outline-none"
+                              className={`mt-1 w-full border rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold tracking-wider outline-none transition-colors ${
+                                item.pnr 
+                                  ? (isPnrOk ? "border-emerald-300 focus:ring-1 focus:ring-emerald-500 bg-emerald-50/10 text-emerald-950" : "border-amber-300 focus:ring-1 focus:ring-amber-500 bg-amber-50/15 text-amber-950")
+                                  : "border-slate-300 focus:ring-1 focus:ring-[#003087] text-slate-900"
+                              }`}
                               placeholder="6 alfanuméricos"
                             />
                           </div>
@@ -1293,6 +1423,24 @@ export default function LerEtiqueta() {
                               placeholder="Digite alguma observação..."
                             />
                           </div>
+
+                          {/* DYNAMIC IATA FORMAT WARNING BLOCK */}
+                          {(!isTagOk || !isPnrOk) && (item.bagTag || item.pnr) && (
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1 text-[11px] text-amber-900 leading-normal text-left animate-fade-in animate-duration-200">
+                              <p className="font-extrabold flex items-center gap-1 text-amber-950">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                Formato Inconsistente (Padrão IATA):
+                              </p>
+                              <div className="space-y-0.5 text-[10px]">
+                                {!isTagOk && item.bagTag && (
+                                  <p>• O número da etiqueta deve possuir de 9 a 10 dígitos numéricos (Res 740).</p>
+                                )}
+                                {!isPnrOk && item.pnr && (
+                                  <p>• O localizador de reserva (PNR) deve ter exatamente 6 caracteres alfanuméricos.</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
 
                           {/* VALIDATION MATCH BANNERS */}
                           {valResult?.found ? (
