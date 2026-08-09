@@ -738,6 +738,11 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                           placeholder="Ex: 0095843920"
                           maxLength={10}
                         />
+                        {bag.etiqueta && bag.etiqueta.trim() && bagagens.some(b => b.id !== bag.id && (b.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === bag.etiqueta.replace(/[^A-Za-z0-9]/g, "").toUpperCase()) && (
+                          <span className="text-[9px] font-bold text-amber-600 block pt-0.5 leading-tight">
+                            ⚠️ Etiqueta repetida nesta lista
+                          </span>
+                        )}
                       </td>
 
                       {/* PNR Code */}
@@ -751,6 +756,11 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                           placeholder="Ex: LHMQ9Z"
                           maxLength={6}
                         />
+                        {bag.pnr && bag.pnr.trim() && bagagens.some(b => b.id !== bag.id && (b.pnr || "").trim().toUpperCase() === bag.pnr.trim().toUpperCase()) && (
+                          <span className="text-[9px] font-bold text-amber-600 block pt-0.5 leading-tight">
+                            ⚠️ Reserva PNR repetida
+                          </span>
+                        )}
                       </td>
 
                       {/* Flight orig */}

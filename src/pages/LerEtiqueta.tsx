@@ -205,8 +205,8 @@ export default function LerEtiqueta() {
     setManualKeyInput(status.geminiKey || "");
   }, []);
 
-  // High-precision automatic validation function per scanned item (dynamically checked)
-  const checkValidation = (bagTag?: string, pnr?: string) => {
+  // High-precision automatic validation function per scanned or pasted item (dynamically checked)
+  const checkValidation = (bagTag?: string, pnr?: string, excludeItemId?: string) => {
     const cleanTag = (bagTag || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
     const cleanPnr = (pnr || "").trim().toUpperCase();
 
@@ -214,36 +214,79 @@ export default function LerEtiqueta() {
       return null;
     }
 
-    // 1. Check in currently active bags
+    // 1. Check in currently active bags in DB
     const activeMatch = savedLists.find((b: any) => {
       const bTag = (b.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
       const bPnr = (b.pnr || "").trim().toUpperCase();
-      return (cleanTag && bTag === cleanTag) || (cleanPnr && bPnr === cleanPnr);
+      const matchTag = cleanTag && bTag === cleanTag;
+      const matchPnr = cleanPnr && bPnr === cleanPnr;
+      return matchTag || matchPnr;
     });
 
     if (activeMatch) {
+      const bTag = (activeMatch.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
+      const bPnr = (activeMatch.pnr || "").trim().toUpperCase();
+      const matchedField = (cleanTag && bTag === cleanTag && cleanPnr && bPnr === cleanPnr)
+        ? "both"
+        : (cleanPnr && bPnr === cleanPnr) ? "pnr" : "etiqueta";
+
       return {
         found: true,
         source: "baggages" as const,
-        item: activeMatch
+        item: activeMatch,
+        matchedField
       };
     }
 
-    // 2. Check in historical processes
+    // 2. Check in pending queue items
+    const pendingMatch = pendingItems.find((p: PendingItem) => {
+      if (excludeItemId && p.id === excludeItemId) return false;
+      const pTag = (p.bagTag || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
+      const pPnr = (p.pnr || "").trim().toUpperCase();
+      const matchTag = cleanTag && pTag === cleanTag;
+      const matchPnr = cleanPnr && pPnr === cleanPnr;
+      return matchTag || matchPnr;
+    });
+
+    if (pendingMatch) {
+      const pTag = (pendingMatch.bagTag || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
+      const pPnr = (pendingMatch.pnr || "").trim().toUpperCase();
+      const matchedField = (cleanTag && pTag === cleanTag && cleanPnr && pPnr === cleanPnr)
+        ? "both"
+        : (cleanPnr && pPnr === cleanPnr) ? "pnr" : "etiqueta";
+
+      return {
+        found: true,
+        source: "pending" as const,
+        item: pendingMatch,
+        matchedField
+      };
+    }
+
+    // 3. Check in historical completed processes
     for (const proc of processes) {
       if (Array.isArray(proc.bagagens)) {
         const match = proc.bagagens.find((b: any) => {
           const bTag = (b.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
           const bPnr = (b.pnr || "").trim().toUpperCase();
-          return (cleanTag && bTag === cleanTag) || (cleanPnr && bPnr === cleanPnr);
+          const matchTag = cleanTag && bTag === cleanTag;
+          const matchPnr = cleanPnr && bPnr === cleanPnr;
+          return matchTag || matchPnr;
         });
 
         if (match) {
+          const bTag = (match.etiqueta || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
+          const bPnr = (match.pnr || "").trim().toUpperCase();
+          const matchedField = (cleanTag && bTag === cleanTag && cleanPnr && bPnr === cleanPnr)
+            ? "both"
+            : (cleanPnr && bPnr === cleanPnr) ? "pnr" : "etiqueta";
+
           return {
             found: true,
             source: "processes" as const,
             item: match,
-            processId: proc.id
+            processId: proc.id,
+            matchedField
           };
         }
       }
@@ -1230,6 +1273,64 @@ export default function LerEtiqueta() {
                 </div>
               </div>
 
+              {/* LIVE DUPLICATE WARNING BANNER FOR MANUAL FORM */}
+              {(() => {
+                const manualVal = checkValidation(manualForm.bagTag, manualForm.pnr);
+                if (manualVal?.found) {
+                  return (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-2.5 text-amber-950 shadow-xs animate-fade-in">
+                      <AlertTriangle className="w-4.5 h-4.5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="text-xs space-y-1.5 w-full">
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <span className="font-extrabold text-amber-950">
+                            ⚠️ Aviso: Número de Reserva ou Etiqueta já bipado / cadastrado!
+                          </span>
+                          <span className="text-[10px] font-black uppercase tracking-wider bg-amber-200/80 px-2 py-0.5 rounded text-amber-900">
+                            Aviso Informativo
+                          </span>
+                        </div>
+                        <p className="text-slate-700 leading-relaxed text-[11px]">
+                          {manualVal.matchedField === "pnr" 
+                            ? `O número de reserva (PNR "${manualForm.pnr.toUpperCase()}")` 
+                            : manualVal.matchedField === "etiqueta"
+                            ? `A etiqueta ("${manualForm.bagTag.toUpperCase()}")`
+                            : `A reserva ("${manualForm.pnr.toUpperCase()}") e a etiqueta ("${manualForm.bagTag.toUpperCase()}")`}
+                          {' '}já foi bipado ou consta no sistema ({
+                            manualVal.source === "baggages" ? "em Bagagens Ativas" : 
+                            manualVal.source === "processes" ? `no Processo Finalizado ID: ${manualVal.processId}` :
+                            "na Fila de Leitura Atual"
+                          }).
+                        </p>
+                        <div className="pt-1 flex items-center justify-between flex-wrap gap-2">
+                          <span className="text-[10px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-200/60">
+                            ✓ Você pode clicar em "Cadastrar e Lançar na Fila" para prosseguir normalmente.
+                          </span>
+                          {manualVal.item && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setManualForm(prev => ({
+                                  ...prev,
+                                  bagTag: manualVal.item.etiqueta || prev.bagTag,
+                                  pnr: manualVal.item.pnr || prev.pnr,
+                                  flight: manualVal.item.vooOrigem || prev.flight,
+                                  corTipo: manualVal.item.corTipo || prev.corTipo,
+                                  observacoes: manualVal.item.observacoes || prev.observacoes
+                                }));
+                              }}
+                              className="text-[10px] font-extrabold text-[#003087] hover:underline cursor-pointer"
+                            >
+                              Sincronizar dados existentes
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               <div className="pt-4 flex gap-3">
                 <button
                   type="button"
@@ -1274,7 +1375,7 @@ export default function LerEtiqueta() {
 
               <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
                 {pendingItems.map((item) => {
-                  const valResult = checkValidation(item.bagTag, item.pnr);
+                  const valResult = checkValidation(item.bagTag, item.pnr, item.id);
                   const isTagOk = isIataTagValid(item.bagTag);
                   const isPnrOk = isPnrValid(item.pnr);
                   
@@ -1444,19 +1545,38 @@ export default function LerEtiqueta() {
 
                           {/* VALIDATION MATCH BANNERS */}
                           {valResult?.found ? (
-                            <div className="p-2.5 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-800 space-y-1.5 text-left">
-                              <div className="flex items-start gap-1.5">
-                                <Check className="w-3.5 h-3.5 shrink-0 text-emerald-600 mt-0.5" />
-                                <div>
-                                  <p className="font-extrabold text-emerald-950 text-[11px]">✓ Já Cadastrado!</p>
-                                  <p className="text-[10px] leading-relaxed text-emerald-700 mt-0.5">
-                                    Encontrado em: <strong>{valResult.source === "baggages" ? "Bagagens Ativas" : `Processo Finalizado (ID: ${valResult.processId})`}</strong>.
+                            <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-950 space-y-1.5 text-left animate-fade-in">
+                              <div className="flex items-start gap-2">
+                                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                                <div className="space-y-1 w-full">
+                                  <div className="flex items-center justify-between">
+                                    <p className="font-extrabold text-amber-950 text-xs">
+                                      ⚠️ Aviso: Reserva / Etiqueta Já Cadastrada!
+                                    </p>
+                                    <span className="text-[9px] font-black uppercase tracking-wider bg-amber-200/80 px-1.5 py-0.5 rounded text-amber-900">
+                                      Aviso Informativo
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] leading-relaxed text-slate-700">
+                                    {valResult.matchedField === "pnr" 
+                                      ? `O PNR "${item.pnr.toUpperCase()}"` 
+                                      : valResult.matchedField === "etiqueta"
+                                      ? `A etiqueta "${item.bagTag.toUpperCase()}"`
+                                      : `O PNR "${item.pnr.toUpperCase()}" e etiqueta "${item.bagTag.toUpperCase()}"`}
+                                    {' '}consta em: <strong>{
+                                      valResult.source === "baggages" ? "Bagagens Ativas" :
+                                      valResult.source === "processes" ? `Processo Finalizado (ID: ${valResult.processId})` :
+                                      "Outra etiqueta nesta mesma fila"
+                                    }</strong>.
+                                  </p>
+                                  <p className="text-[10px] text-amber-800 font-bold bg-amber-100/80 px-2 py-0.5 rounded inline-block">
+                                    ✓ Você pode prosseguir e adicionar à fila normalmente.
                                   </p>
                                 </div>
                               </div>
                               
                               {/* Auto-fill button */}
-                              {(valResult.item.vooOrigem !== item.flight || valResult.item.corTipo !== item.corTipo || valResult.item.etiqueta !== item.bagTag || valResult.item.pnr !== item.pnr || (valResult.item.observacoes || "") !== (item.observacoes || "")) && (
+                              {valResult.item && (valResult.item.vooOrigem !== item.flight || valResult.item.corTipo !== item.corTipo || valResult.item.etiqueta !== item.bagTag || valResult.item.pnr !== item.pnr || (valResult.item.observacoes || "") !== (item.observacoes || "")) && (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1469,9 +1589,9 @@ export default function LerEtiqueta() {
                                       observacoes: valResult.item.observacoes || ""
                                     } : pi));
                                   }}
-                                  className="w-full text-center bg-white hover:bg-emerald-100/40 border border-emerald-200 text-emerald-800 font-bold text-[10px] py-1 rounded flex items-center justify-center gap-1 cursor-pointer transition"
+                                  className="w-full text-center bg-white hover:bg-amber-100/60 border border-amber-300 text-amber-900 font-bold text-[10px] py-1 rounded flex items-center justify-center gap-1 cursor-pointer transition shadow-2xs"
                                 >
-                                  <RefreshCw className="w-2.5 h-2.5" /> Auto-preencher
+                                  <RefreshCw className="w-2.5 h-2.5" /> Sincronizar dados existentes
                                 </button>
                               )}
                             </div>
