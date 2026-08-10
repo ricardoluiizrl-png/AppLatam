@@ -21,7 +21,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       const cleanUser = username.trim();
       const cleanPass = password.trim();
 
-      if (cleanUser.toLowerCase() === "naumramos" && cleanPass === "147258369") {
+      if (cleanUser.toLowerCase() === "naumramos" && cleanPass === "369258147") {
         setIsLoading(false);
         onLoginSuccess("NaumRamos");
       } else {
