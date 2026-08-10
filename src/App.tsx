@@ -8,8 +8,15 @@ import Dashboard from "./pages/Dashboard";
 import Historico from "./pages/Historico";
 import Estatisticas from "./pages/Estatisticas";
 
+const CURRENT_AUTH_VERSION = "v2_369258147";
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const savedVersion = localStorage.getItem("latam_auth_version");
+    if (savedVersion !== CURRENT_AUTH_VERSION) {
+      localStorage.removeItem("latam_auth_logged_in");
+      return false;
+    }
     return localStorage.getItem("latam_auth_logged_in") === "true";
   });
 
@@ -33,6 +40,7 @@ export default function App() {
     setShowSplash(true);
     localStorage.setItem("latam_auth_logged_in", "true");
     localStorage.setItem("latam_auth_username", username);
+    localStorage.setItem("latam_auth_version", CURRENT_AUTH_VERSION);
 
     const updatedUser = { nome: "Naum Ramos", matricula: "GRU-0564" };
     setActiveUser(updatedUser);
