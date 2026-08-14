@@ -162,38 +162,24 @@ app.delete("/api/processes/:id", (req, res) => {
   res.json({ success: true, message: "Processo excluído permanentemente." });
 });
 
-// Baggage API 1: Get active baggages (< 24 hours and not deleted)
+// Baggage API 1: Get active baggages (all baggages in queue that are not deleted)
 app.get("/api/baggages", (req, res) => {
   const allBags = readBagDB();
-  const now = Date.now();
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-
-  // Active means NOT deleted AND created within the last 24 hours
-  const activeBags = allBags.filter((b: any) => {
-    const createdTime = new Date(b.createdAt || b.timestamp).getTime();
-    const isNew = (now - createdTime) <= ONE_DAY_MS;
-    return !b.deleted && isNew;
-  });
+  // Active means NOT deleted
+  const activeBags = allBags.filter((b: any) => !b.deleted);
 
   // Sort descending
-  activeBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
+  activeBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.timestamp || 0).getTime());
   res.json(activeBags);
 });
 
-// Baggage API 2: Get expired or deleted baggages (trash bin / history of items > 24 hours or deleted)
+// Baggage API 2: Get expired or deleted baggages (trash bin)
 app.get("/api/baggages/expired", (req, res) => {
   const allBags = readBagDB();
-  const now = Date.now();
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  // Expired means explicitly deleted items
+  const expiredBags = allBags.filter((b: any) => b.deleted === true);
 
-  // Expired means deleted OR created > 24 hours ago
-  const expiredBags = allBags.filter((b: any) => {
-    const createdTime = new Date(b.createdAt || b.timestamp).getTime();
-    const isOlder = (now - createdTime) > ONE_DAY_MS;
-    return b.deleted || isOlder;
-  });
-
-  expiredBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
+  expiredBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.timestamp || 0).getTime());
   res.json(expiredBags);
 });
 
@@ -289,7 +275,7 @@ app.delete("/api/baggages/:id", (req, res) => {
   res.json({ success: true, message: "Bagagem removida permanentemente do banco." });
 });
 
-// API: test-key proxy to verify Gemini 2.5 without CORS
+// API: test-key proxy to verify Gemini without CORS
 app.post("/api/test-key", async (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey) {
@@ -297,9 +283,9 @@ app.post("/api/test-key", async (req, res) => {
   }
 
   try {
-    // Default: Gemini 2.5
+    // Default: Gemini 3.6
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -314,7 +300,7 @@ app.post("/api/test-key", async (req, res) => {
       return res.status(response.status).json({ error: `Erro na API Gemini: status ${response.status} (${errorText})` });
     }
 
-    return res.json({ success: true, message: "Conexão com a API do Gemini 3.5 efetuada com sucesso!" });
+    return res.json({ success: true, message: "Conexão com a API do Gemini efetuada com sucesso!" });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || "Erro de conexão ao servidor de IA." });
   }
@@ -397,11 +383,11 @@ app.post("/api/ocr-text", async (req, res) => {
     const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
       return res.status(400).json({ 
-        error: "Chave de API do Gemini 3.5 ausente para análise de texto. Por favor adicione sua chave própria nas configurações."
+        error: "Chave de API do Gemini ausente para análise de texto. Por favor adicione sua chave própria nas configurações."
       });
     }
 
-    console.log("[SERVER TEXT OCR] Analisando texto via Gemini 2.5...");
+    console.log("[SERVER TEXT OCR] Analisando texto via Gemini 3.6...");
     const ai = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
@@ -412,7 +398,7 @@ app.post("/api/ocr-text", async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.6-flash",
       contents: promptText,
       config: {
         responseMimeType: "application/json",
@@ -441,12 +427,12 @@ app.post("/api/ocr-text", async (req, res) => {
 
     if (isExpiredError) {
       return res.status(401).json({
-        error: "A chave de API do Gemini expirou ou é inválida. Por favor, insira ou atualize sua própria chave de API do Gemini 3.5 no painel de configurações abaixo da câmera."
+        error: "A chave de API do Gemini expirou ou é inválida. Por favor, insira ou atualize sua própria chave de API do Gemini no painel de configurações abaixo da câmera."
       });
     }
     if (isQuotaError) {
       return res.status(429).json({
-        error: "Cota limite atingida do Gemini. Por favor, insira sua própria chave de API do Gemini 3.5 nas configurações abaixo da câmera para continuar de graça."
+        error: "Cota limite atingida do Gemini. Por favor, insira sua própria chave de API do Gemini nas configurações abaixo da câmera para continuar de graça."
       });
     }
 
@@ -466,54 +452,42 @@ app.post("/api/ocr", async (req, res) => {
   const clientApiKey = (req.headers["x-api-key"] || req.headers["x-gemini-api-key"]) as string | undefined;
 
   const promptText = `
-    Você é um assistente especializado e de altíssima precisão em conciliação e rastreamento de bagagens aeroportuárias (especialmente LATAM Airlines).
-    Seu objetivo é analisar esta imagem de uma etiqueta de bagagem (bag tag) ou de um documento de bagagem e extrair as seguintes informações com máxima fidelidade ao que está impresso:
+    Você é um assistente especializado e de altíssima precisão em leitura de etiquetas de bagagem (especialmente LATAM Airlines).
+    Análise esta imagem de etiqueta de bagagem e extraia com máxima fidelidade os campos:
 
     1. Número da Etiqueta de Bagagem (bagTag):
-       - Geralmente é um número de 10 dígitos decimais (ex: 0095123456 ou 0957812345), mas ATENÇÃO: novas etiquetas da LATAM podem conter LETRAS e NÚMEROS juntos (ex: código alfanumérico com letras e números misturados).
-       - Muitas vezes está impresso próximo ao código de barras principal ou no topo/lateral escrito "BAG TAG" ou "BAGGAGE CLAIM".
-       - Se houver letras e números misturados, extraia todos eles juntos (com as letras e números correspondentes) removendo apenas hifens, barras ou espaços em branco. O código normalmente possui entre 8 e 12 caracteres alfanuméricos.
-       - Se encontrar apenas 9 dígitos puramente numéricos começando com 9, adicione o 0 no início ("09...").
-       - Caso não consiga ler de nenhuma forma, retorne string vazia "".
+       - Código alfanumérico ou numérico impresso na etiqueta (entre 1 e 12 caracteres, ex: "0095123456", "M1XNSX", "LA095123").
+       - Se houver apenas 9 dígitos numéricos começando com 9, adicione o 0 no início ("09...").
+       - Se não encontrar, retorne "".
 
     2. Código de Reserva PNR / Localizador (pnr):
-       - Procure por um código de EXATAMENTE 6 caracteres alfanuméricos em letras maiúsculas (ex: "XY7G8H", "RESERVA: AZ91KL", "LOCATOR: QB33WR").
-       - Geralmente impresso perto do nome do passageiro, escrito "PNR", "RESERVA", "LOCATOR", "RECORD LOCATOR", "BKG", "BOOKING", ou isolado em um tamanho ligeiramente menor na etiqueta.
-       - Nunca retorne códigos de voo ou números parciais de bilhetes. Deve ter exatamente 6 caracteres.
-       - Caso não consiga identificar com certeza, retorne string vazia "".
+       - Código de 6 caracteres alfanuméricos em maiúsculas (ex: "M1XNSX", "XY7G8H").
+       - Geralmente impresso próximo a "PNR", "RESERVA" ou "LOCATOR".
+       - Se não encontrar com certeza, retorne "".
 
     3. Número do Voo (flight):
-       - Procure pelo código identificador do voo, que começa obrigatoriamente com o prefixo da companhia aérea de 2 letras (geralmente LA, JJ, G3, AD, AR, CM) conhecido ou não, seguido por 3 a 4 dígitos numéricos (ex: LA8070, LA3402, AD2450, G31234).
-       - Remova qualquer espaço interno (ex: "LA 8070" vira "LA8070").
-       - Caso não consiga ler, retorne string vazia "".
+       - Código do voo com 2 letras da cia aérea + 3 a 4 números (ex: LA8070, LA3333).
+       - Se não encontrar, retorne "".
 
     4. Cor/Tipo de Mala (cor_tipo):
-       - Se a mala for visível na foto, estime suas características físicas (ex: "Mala rígida preta", "Bolsa de viagem azul marinho", "Mala de tecido vermelha com rodinhas").
-       - Se apenas a etiqueta papel for visível, tente procurar por anotações ou deixe em branco "".
+       - Se a mala for visível na foto, descreva em poucas palavras (ex: "Mala preta", "Bolsa azul").
+       - Se não for visível, retorne "".
 
-    Seja extremamente ágil e preciso. Dê preferência aos dados reais impressos na etiqueta em vez de inventar dados fictícios.
-
-    Retorne obrigatoriamente apenas um objeto JSON válido com as seguintes chaves exatas:
-    {
-      "bagTag": "string com o número da etiqueta ou código alfanumérico",
-      "pnr": "string com o localizador de 6 caracteres",
-      "flight": "string com o número do voo (ex: LA8070)",
-      "cor_tipo": "string com a descrição física da mala"
-    }
+    Retorne apenas o JSON com as chaves: bagTag, pnr, flight, cor_tipo.
   `;
 
   try {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
 
-    // DEFAULT TO GEMINI 2.5
+    // DEFAULT TO GEMINI 3.6
     const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
       return res.status(400).json({ 
-        error: "Chave de API do Gemini 2.5 ausente ou expirada. Por favor, adicione sua própria chave de API do Gemini nas configurações abaixo da câmera."
+        error: "Chave de API do Gemini ausente ou expirada. Por favor, adicione sua própria chave de API do Gemini nas configurações abaixo da câmera."
       });
     }
 
-    console.log("[SERVER OCR] Realizando OCR real de alta precisão via Gemini 2.5...");
+    console.log("[SERVER OCR] Realizando OCR via Gemini 3.6...");
     const ai = new GoogleGenAI({
       apiKey: apiKey,
       httpOptions: {
@@ -531,7 +505,7 @@ app.post("/api/ocr", async (req, res) => {
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.6-flash",
       contents: [
         imagePart,
         { text: promptText }
@@ -541,10 +515,10 @@ app.post("/api/ocr", async (req, res) => {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            bagTag: { type: Type.STRING, description: "Código ou número de etiqueta de bagagem de 8 a 12 caracteres (pode conter números e letras misturados. Ex: LA00951342 ou 0095312340). String vazia se não identificado." },
-            pnr: { type: Type.STRING, description: "Código localizador de reserva PNR de exatamente 6 caracteres em maiúsculo. String vazia se não identificado." },
-            flight: { type: Type.STRING, description: "Número do voo consolidado sem espaços, ex: LA8070. String vazia se não identificado." },
-            cor_tipo: { type: Type.STRING, description: "Cor ou tipo visual da mala. String vazia se não percebido ou não visível." }
+            bagTag: { type: Type.STRING, description: "Código da etiqueta de bagagem (1 a 12 caracteres)." },
+            pnr: { type: Type.STRING, description: "PNR de 6 caracteres." },
+            flight: { type: Type.STRING, description: "Número do voo (ex: LA8070)." },
+            cor_tipo: { type: Type.STRING, description: "Cor ou tipo da mala." }
           },
           required: []
         },
@@ -585,6 +559,69 @@ app.post("/api/ocr", async (req, res) => {
     });
   }
 });
+
+// Helper to locate static files in public, dist, or root directories
+function getStaticFilePath(filename: string): string | null {
+  const cleanFilename = filename.replace(/^\//, "");
+  const candidate1 = path.join(process.cwd(), "public", cleanFilename);
+  if (fs.existsSync(candidate1)) return candidate1;
+  const candidate2 = path.join(process.cwd(), "dist", cleanFilename);
+  if (fs.existsSync(candidate2)) return candidate2;
+  const candidate3 = path.join(process.cwd(), cleanFilename);
+  if (fs.existsSync(candidate3)) return candidate3;
+  return null;
+}
+
+// Explicit handler for static icons & images to ensure exact Content-Type & CORS for PWABuilder / TWA
+app.get(["/icon-192.png", "/icon-512.png"], (req, res) => {
+  if (req.path.includes("192")) {
+    return res.redirect(301, "https://iili.io/CPBDZeR.png");
+  }
+  return res.redirect(301, "https://iili.io/CPBDQ5v.png");
+});
+
+app.get(["/screenshot-desktop.jpg", "/screenshot-mobile.jpg"], (req, res) => {
+  const filePath = getStaticFilePath(req.path);
+  if (filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg"
+    };
+    res.setHeader("Content-Type", mimeTypes[ext] || "image/png");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.sendFile(filePath);
+  }
+  res.status(404).setHeader("Content-Type", "text/plain").send("Icon Not Found");
+});
+
+app.get("/manifest.json", (req, res) => {
+  const filePath = getStaticFilePath("manifest.json");
+  if (filePath) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return res.sendFile(filePath);
+  }
+  res.status(404).setHeader("Content-Type", "text/plain").send("Manifest Not Found");
+});
+
+app.get("/sw.js", (req, res) => {
+  const filePath = getStaticFilePath("sw.js");
+  if (filePath) {
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Service-Worker-Allowed", "/");
+    res.setHeader("Cache-Control", "no-cache");
+    return res.sendFile(filePath);
+  }
+  res.status(404).setHeader("Content-Type", "text/plain").send("Service Worker Not Found");
+});
+
+app.use(express.static(path.join(process.cwd(), "public")));
+app.use(express.static(path.join(process.cwd(), "dist")));
 
 // Setup Vite Dev server / production static files
 async function serveApp() {

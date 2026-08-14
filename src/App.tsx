@@ -7,6 +7,7 @@ import LerEtiqueta from "./pages/LerEtiqueta";
 import Dashboard from "./pages/Dashboard";
 import Historico from "./pages/Historico";
 import Estatisticas from "./pages/Estatisticas";
+import GuiaSlidesGamma from "./pages/GuiaSlidesGamma";
 
 const CURRENT_AUTH_VERSION = "v2_369258147";
 
@@ -32,17 +33,23 @@ export default function App() {
         console.error("Erro ao analisar usuário ativo salvo:", e);
       }
     }
-    return { nome: "Naum Ramos", matricula: "GRU-0564" };
+    return { nome: "Agente LATAM", matricula: "6021908", email: "agente.latam@latam.com" };
   });
 
-  const handleLoginSuccess = (username: string) => {
+  const handleLoginSuccess = (userParam: string | { nome: string; matricula: string; email: string }) => {
     setIsAuthenticated(true);
     setShowSplash(true);
     localStorage.setItem("latam_auth_logged_in", "true");
-    localStorage.setItem("latam_auth_username", username);
     localStorage.setItem("latam_auth_version", CURRENT_AUTH_VERSION);
 
-    const updatedUser = { nome: "Naum Ramos", matricula: "GRU-0564" };
+    let updatedUser = { nome: "Agente LATAM", matricula: "6021908", email: "agente.latam@latam.com" };
+    if (typeof userParam === "object") {
+      updatedUser = {
+        nome: userParam.nome || "Agente LATAM",
+        matricula: userParam.matricula || "6021908",
+        email: userParam.email || "agente.latam@latam.com"
+      };
+    }
     setActiveUser(updatedUser);
     localStorage.setItem("latam_active_user", JSON.stringify(updatedUser));
   };
@@ -63,13 +70,15 @@ export default function App() {
       case "novo":
         return <NovoProcesso activeUser={activeUser} onActiveUserChange={handleUserChange} />;
       case "ocr":
-        return <LerEtiqueta />;
+        return <LerEtiqueta activeUser={activeUser} />;
       case "dashboard":
         return <Dashboard />;
       case "estatisticas":
         return <Estatisticas />;
       case "historico":
-        return <Historico />;
+        return <Historico activeUser={activeUser} />;
+      case "slides":
+        return <GuiaSlidesGamma />;
       default:
         return <NovoProcesso activeUser={activeUser} onActiveUserChange={handleUserChange} />;
     }

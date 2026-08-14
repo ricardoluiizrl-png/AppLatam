@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { apiFetch } from "../utils/mockApi";
+import { apiFetch, recordUsabilityLog } from "../utils/mockApi";
+import { notifyBaggagesChanged, subscribeBaggagesChanged } from "../utils/syncEvents";
+import { DuplicatePnrModal, DuplicatePnrInfo } from "../components/DuplicatePnrModal";
 import { 
   FileText, 
   Trash2, 
@@ -24,6 +26,7 @@ import {
 import { Funcionario, Bagagem, SituacaoType, SITUACOES } from "../types";
 import { gerarHtmlEmail } from "../utils/gerarHtmlEmail";
 import { gerarCsvRelatorio, gerarNomeArquivoCsv, formatarDataParaCsv } from "../utils/gerarCsvRelatorio";
+import { addNotification } from "../utils/notifications";
 
 interface NovoProcessoProps {
   activeUser: { nome: string; matricula: string };
@@ -54,6 +57,8 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   // Geração / Output States
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [duplicatePnrModalOpen, setDuplicatePnrModalOpen] = useState(false);
+  const [duplicatePnrInfo, setDuplicatePnrInfo] = useState<DuplicatePnrInfo | null>(null);
   const [generatedHtml, setGeneratedHtml] = useState("");
   const [generatedCsv, setGeneratedCsv] = useState("");
   const [generatedCsvFilename, setGeneratedCsvFilename] = useState("");
@@ -79,21 +84,27 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   });
 
   // Sync with central database
-  const fetchBaggages = async () => {
+  const fetchBaggages = async (isBackground = false) => {
     try {
-      setLoadingBags(true);
+      if (!isBackground) setLoadingBags(true);
       const res = await apiFetch("/api/baggages");
       if (res.ok) {
         const data = await res.json();
         setBagagens(data);
         // Pre-select pending (not generated) baggages for process creation by default
         const pending = data.filter((item: any) => !item.generated);
-        setSelectedBagIds(pending.map((item: any) => item.id));
+        setSelectedBagIds((prev) => {
+          if (prev.length === 0) return pending.map((item: any) => item.id);
+          const validIds = data.map((item: any) => item.id);
+          const currentValid = prev.filter(id => validIds.includes(id));
+          const newPendingIds = pending.map((p: any) => p.id).filter((id: string) => !prev.includes(id));
+          return [...currentValid, ...newPendingIds];
+        });
       }
     } catch (e) {
       console.error("Erro ao sincronizar bagagens:", e);
     } finally {
-      setLoadingBags(false);
+      if (!isBackground) setLoadingBags(false);
     }
   };
 
@@ -118,6 +129,13 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   useEffect(() => {
     fetchBaggages();
     fetchExpiredBags();
+
+    const unsubscribe = subscribeBaggagesChanged(() => {
+      fetchBaggages(true);
+      fetchExpiredBags();
+    }, 2500);
+
+    return () => unsubscribe();
   }, []);
 
   // Add empty baggage line to server & state
@@ -142,6 +160,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
         const created = await res.json();
         setBagagens([created, ...bagagens]);
         setSelectedBagIds([created.id, ...selectedBagIds]);
+        notifyBaggagesChanged();
       }
     } catch (err) {
       console.error("Erro ao adicionar bagagem:", err);
@@ -170,6 +189,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: sanitizedValue })
       });
+      notifyBaggagesChanged();
     } catch (err) {
       console.error("Erro ao sincronizar alteração no banco:", err);
     }
@@ -186,6 +206,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       if (res.ok) {
         setBagagens((prev) => prev.filter((b) => b.id !== id));
         setSelectedBagIds((prev) => prev.filter((bid) => bid !== id));
+        notifyBaggagesChanged();
         await fetchExpiredBags(); // Refresh lixeira lists too
       }
     } catch (err) {
@@ -409,6 +430,24 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
       const savedData = await response.json();
       
+      // Record usability log with complete agent and baggages details
+      recordUsabilityLog({
+        usuarioNome: activeUser.nome,
+        usuarioMatricula: activeUser.matricula,
+        usuarioEmail: (activeUser as any).email || "agente.latam@latam.com",
+        acao: "CRIACAO_PROCESSO_PIR",
+        descricao: `Processo PIR gerado para ${companhiaAerea} com ${selectedBaggages.length} bagagens cadastradas/bipadas.`,
+        bagagens: selectedBaggages.map(b => ({
+          etiqueta: b.etiqueta,
+          pnr: b.pnr,
+          vooOrigem: b.vooOrigem,
+          corTipo: b.corTipo,
+          situacao: b.situacao,
+          observacoes: b.observacoes,
+          scanned: b.scanned
+        }))
+      });
+
       // Update local states for presentation
       setSuccessInfo(savedData);
       setModalFuncionarios(savedData.funcionarios || mockProcess.funcionarios || []);
@@ -435,6 +474,13 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+
+        addNotification({
+          type: "csv_generated",
+          title: "Arquivo CSV Gerado com Sucesso",
+          message: `O relatório CSV de sobras '${csvFilename}' foi compilado com ${selectedBaggages.length} bagagem(ns) e salvo no sistema.`,
+          linkTab: "novo"
+        });
       } catch (err) {
         console.error("Erro no download automático do CSV:", err);
       }
@@ -476,6 +522,13 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+
+      addNotification({
+        type: "csv_generated",
+        title: "Download de Arquivo CSV",
+        message: `O arquivo '${nameToDownload}' foi exportado e baixado para o seu dispositivo.`,
+        linkTab: "novo"
+      });
     } catch (err) {
       console.error("Erro ao baixar CSV:", err);
     }
@@ -552,84 +605,36 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
   return (
     <div className="space-y-8 pb-16">
       
-      {/* SEÇÃO 1: CABEÇALHO/COMPANHIA OPERACIONAL */}
-      <div className="bg-white rounded border border-slate-200 overflow-hidden shadow-xs">
-        <div className="bg-[#003087] p-4 flex justify-between items-center">
-          <div className="flex gap-4 items-center">
-            <div className="bg-white p-1 rounded-sm">
-              <img src="https://media.base44.com/images/public/user_6a0fbf5247f6d28fc0714536/adac6e864_Latam-logo-2.png" alt="LATAM" className="h-4" />
-            </div>
-            <div>
-              <div className="text-white text-[10px] font-bold uppercase leading-tight tracking-wider">Receita Federal do Brasil</div>
-              <div className="text-white text-xs opacity-80 uppercase leading-none font-semibold">Formulário de Bagagens Extraviadas</div>
-            </div>
-          </div>
+      {/* SEÇÃO 1: CABEÇALHO/COMPANHIA OPERACIONAL COM IMAGEM DE AGENTE LATAM */}
+      <div className="relative overflow-hidden rounded-3xl bg-[#003087] text-white shadow-xl border border-blue-900/30">
+        <div 
+          className="absolute inset-0 bg-cover bg-center opacity-25 mix-blend-luminosity"
+          style={{ backgroundImage: `url('/src/assets/images/latam_agent_service_1786420041107.jpg')` }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#003087] via-[#003087]/90 to-transparent" />
 
-        </div>
-        
-        {/* Form Body */}
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Companhia Aérea</label>
-            <input
-              type="text"
-              value={companhiaAerea}
-              onChange={(e) => setCompanhiaAerea(e.target.value)}
-              className="w-full px-3 py-2 border rounded border-slate-300 text-sm focus:ring-1 focus:ring-[#003087] outline-none font-medium text-slate-800"
-              placeholder="Ex: LATAM Airlines"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">Local do Registro Corporativo</label>
-            <div className="px-3 py-2 bg-slate-50 border rounded border-slate-200 text-sm font-medium text-slate-500 cursor-not-allowed">
-              Aeroporto de Guarulhos S/A (GRU)
+        <div className="relative z-10 p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="space-y-2 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <div className="bg-white px-3 py-1.5 rounded-xl shadow-xs">
+                <img src="https://media.base44.com/images/public/user_6a0fbf5247f6d28fc0714536/adac6e864_Latam-logo-2.png" alt="LATAM" className="h-4" />
+              </div>
+              <span className="text-xs font-black uppercase text-blue-200 tracking-wider">
+                Emissão de Formato PIR / Sobras
+              </span>
             </div>
+            
+            <h2 className="text-xl sm:text-2xl font-black text-white">
+              Geração de Processo PIR e Arquivo de Conciliação
+            </h2>
+            <p className="text-xs text-blue-100/90 font-medium leading-relaxed">
+              Compile as bagagens lidas em arquivo formato CSV para a Receita Federal / GRU Airport com a linha oficial de fechamento e assinatura.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* SEÇÃO 2: FUNCIONÁRIO RESPONSÁVEL (DADOS PARA ASSINATURA DO ARQUIVO) */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <UserCheck className="w-4 h-4 text-[#003087]" />
-            <h3 className="text-sm font-extrabold uppercase text-slate-800">
-              Funcionário Responsável (Assinatura do Arquivo)
-            </h3>
-          </div>
-          <span className="text-[10px] uppercase font-bold bg-[#003087]/15 text-[#003087] px-2 py-1 rounded">
-            Operador Único unificado
-          </span>
-        </div>
 
-        <div className="p-6">
-          <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-            As informações abaixo serão incorporadas à assinatura e ao cabeçalho do arquivo gerado para a Receita Federal. Altere quando preferir para registrar outro operador (as mudanças também sincronizam no topo e lateral do app!).
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase block">Nome Completo do Responsável</label>
-              <input
-                type="text"
-                value={activeUser.nome}
-                onChange={(e) => onActiveUserChange({ ...activeUser, nome: e.target.value })}
-                className="w-full px-3 py-2.5 bg-slate-50 border rounded-lg border-slate-300 text-xs focus:ring-1 focus:ring-[#003087] outline-none font-semibold text-slate-800"
-                placeholder="Ex: Ricardo Luiz"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase block">Matrícula Corporativa GRU</label>
-              <input
-                type="text"
-                value={activeUser.matricula}
-                onChange={(e) => onActiveUserChange({ ...activeUser, matricula: e.target.value })}
-                className="w-full px-3 py-2.5 bg-slate-50 border rounded-lg border-slate-300 text-xs focus:ring-1 focus:ring-[#003087] outline-none font-mono font-bold text-slate-800"
-                placeholder="Ex: GRU-0564"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
 
 
 
@@ -639,12 +644,15 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm space-y-px">
         <div className="bg-gradient-to-r from-[#003087]/5 to-slate-50 border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
               <h3 className="text-sm font-extrabold text-slate-800">Etiquetas Pendentes</h3>
+              <span className="text-[10px] font-extrabold bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full">
+                Fila Total: {bagagens.length} ({pendingBags.length} Pendentes)
+              </span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              Ainda não foram geradas no arquivo CSV | Total ativo pendente: <strong>{pendingBags.length}</strong> volumes | Selecionados: <strong>{pendingBags.filter(b => selectedBagIds.includes(b.id)).length}</strong> volumes
+              Etiquetas aguardando envio no relatório | Pendentes: <strong>{pendingBags.length}</strong> | Selecionados para envio: <strong>{pendingBags.filter(b => selectedBagIds.includes(b.id)).length}</strong>
             </p>
           </div>
           <div className="flex gap-2 w-full sm:w-auto justify-end">
@@ -756,11 +764,29 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
                           placeholder="Ex: LHMQ9Z"
                           maxLength={6}
                         />
-                        {bag.pnr && bag.pnr.trim() && bagagens.some(b => b.id !== bag.id && (b.pnr || "").trim().toUpperCase() === bag.pnr.trim().toUpperCase()) && (
-                          <span className="text-[9px] font-bold text-amber-600 block pt-0.5 leading-tight">
-                            ⚠️ Reserva PNR repetida
-                          </span>
-                        )}
+                        {(() => {
+                          if (!bag.pnr || !bag.pnr.trim()) return null;
+                          const pnrUpper = bag.pnr.trim().toUpperCase();
+                          const currentTagUpper = (bag.etiqueta || "").trim().toUpperCase();
+                          const matchingBags = bagagens.filter(b => b.id !== bag.id && (b.pnr || "").trim().toUpperCase() === pnrUpper);
+                          if (matchingBags.length === 0) return null;
+
+                          const sameTagMatch = matchingBags.find(b => (b.etiqueta || "").trim().toUpperCase() === currentTagUpper && currentTagUpper !== "");
+                          if (sameTagMatch) {
+                            return (
+                              <span className="text-[9px] font-bold text-amber-600 block pt-0.5 leading-tight">
+                                ⚠️ Etiqueta e PNR idênticos repetidos
+                              </span>
+                            );
+                          }
+
+                          const otherTag = matchingBags[0]?.etiqueta || "";
+                          return (
+                            <span className="text-[9px] font-extrabold text-[#003087] block pt-0.5 leading-tight">
+                              ℹ️ Vol. adicional PNR {pnrUpper} {otherTag ? `(Tag ${otherTag})` : ''} — Ambas constarão no arquivo final
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* Flight orig */}
@@ -1048,13 +1074,7 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
 
         {lixeiraExpanded && (
           <div className="p-0 animate-fade-in">
-            <div className="bg-amber-50/50 border-b border-amber-100 p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-              <div className="flex gap-2">
-                <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-amber-900 leading-normal max-w-2xl text-left">
-                  Conforme as especificações operacionais, as bagagens lidas vão <strong>automaticamente para a lixeira após 24 horas</strong> da leitura para manter o painel de conciliação limpo. Você pode recuperar qualquer etiqueta quando quiser para que ela volte ao painel ativo por mais 24 horas!
-                </p>
-              </div>
+            <div className="bg-amber-50/50 border-b border-amber-100 p-3.5 flex flex-col md:flex-row justify-end items-start md:items-center gap-3">
               <div className="flex items-center gap-2 shrink-0">
                 {selectedExpiredBagIds.length > 0 ? (
                   <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs">
@@ -1863,6 +1883,13 @@ export default function NovoProcesso({ activeUser, onActiveUserChange }: NovoPro
           </div>
         </div>
       )}
+
+      {/* POPUP MODAL PARA AVISO DE ETIQUETA / RESERVA JÁ BIPADA */}
+      <DuplicatePnrModal
+        isOpen={duplicatePnrModalOpen}
+        onClose={() => setDuplicatePnrModalOpen(false)}
+        info={duplicatePnrInfo}
+      />
 
     </div>
   );

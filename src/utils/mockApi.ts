@@ -13,6 +13,9 @@ if (!localStorage.getItem("processes")) {
 if (!localStorage.getItem("baggages")) {
   localStorage.setItem("baggages", JSON.stringify([]));
 }
+if (!localStorage.getItem("usability_logs")) {
+  localStorage.setItem("usability_logs", JSON.stringify([]));
+}
 
 // Function to serve DB reads/writes
 function getProcesses() {
@@ -37,6 +40,18 @@ function getBaggages() {
 
 function saveBaggages(data: any) {
   localStorage.setItem("baggages", JSON.stringify(data));
+}
+
+function getUsabilityLogs() {
+  try {
+    return JSON.parse(localStorage.getItem("usability_logs") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveUsabilityLogs(data: any) {
+  localStorage.setItem("usability_logs", JSON.stringify(data));
 }
 
 // Emulate backend logic in client-side localStorage
@@ -140,16 +155,8 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   if (path === "/api/baggages") {
     if (method === "GET") {
       const allBags = getBaggages();
-      const now = Date.now();
-      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-      
-      const activeBags = allBags.filter((b: any) => {
-        const createdTime = new Date(b.createdAt || b.timestamp).getTime();
-        const isNew = (now - createdTime) <= ONE_DAY_MS;
-        return !b.deleted && isNew;
-      });
-      
-      activeBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
+      const activeBags = allBags.filter((b: any) => !b.deleted);
+      activeBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.timestamp || 0).getTime());
       return new Response(JSON.stringify(activeBags), {
         status: 200,
         headers: { "Content-Type": "application/json" }
@@ -214,16 +221,8 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
   if (path === "/api/baggages/expired") {
     if (method === "GET") {
       const allBags = getBaggages();
-      const now = Date.now();
-      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-      
-      const expiredBags = allBags.filter((b: any) => {
-        const createdTime = new Date(b.createdAt || b.timestamp).getTime();
-        const isOlder = (now - createdTime) > ONE_DAY_MS;
-        return b.deleted || isOlder;
-      });
-      
-      expiredBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
+      const expiredBags = allBags.filter((b: any) => b.deleted === true);
+      expiredBags.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.timestamp || 0).getTime());
       return new Response(JSON.stringify(expiredBags), {
         status: 200,
         headers: { "Content-Type": "application/json" }
@@ -415,7 +414,7 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
           console.log("[MOCK API] Realizando OCR real de alta precisão via Gemini diretamente pelo navegador");
           const cleanBase64 = imageBase64 ? imageBase64.replace(/^data:image\/\w+;base64,/, "") : "";
 
-          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${clientGeminiKey}`;
+          const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${clientGeminiKey}`;
           const gRes = await originalFetch(gUrl, {
             method: "POST",
             headers: {
@@ -549,6 +548,79 @@ async function handleLocalApi(urlStr: string, init?: RequestInit): Promise<Respo
     }
   }
 
+  // --- /api/usability-logs ---
+  if (path === "/api/usability-logs") {
+    if (method === "GET") {
+      const logs = getUsabilityLogs();
+      const search = parsedUrl.searchParams.get("search") || "";
+      const acao = parsedUrl.searchParams.get("acao") || "";
+
+      let filtered = logs;
+      if (acao) {
+        filtered = filtered.filter((l: any) => l.acao === acao);
+      }
+      if (search.trim()) {
+        const term = search.toLowerCase().trim();
+        filtered = filtered.filter((l: any) => {
+          if (l.usuarioNome?.toLowerCase().includes(term)) return true;
+          if (l.usuarioMatricula?.toLowerCase().includes(term)) return true;
+          if (l.usuarioEmail?.toLowerCase().includes(term)) return true;
+          if (l.descricao?.toLowerCase().includes(term)) return true;
+          if (Array.isArray(l.bagagens)) {
+            const bagMatch = l.bagagens.some((b: any) => 
+              b.etiqueta?.toLowerCase().includes(term) ||
+              b.pnr?.toLowerCase().includes(term) ||
+              b.vooOrigem?.toLowerCase().includes(term) ||
+              b.corTipo?.toLowerCase().includes(term)
+            );
+            if (bagMatch) return true;
+          }
+          return false;
+        });
+      }
+
+      filtered.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      return new Response(JSON.stringify(filtered), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    if (method === "POST") {
+      const { usuarioNome, usuarioMatricula, usuarioEmail, acao, descricao, bagagens, detalhesExtra } = body || {};
+
+      const newLog = {
+        id: "log_" + Date.now() + "_" + Math.floor(Math.random() * 10000),
+        usuarioNome: usuarioNome || "Agente LATAM",
+        usuarioMatricula: usuarioMatricula || "6021908",
+        usuarioEmail: usuarioEmail || "agente.latam@latam.com",
+        acao: acao || "BIPAGEM_ETIQUETA",
+        descricao: descricao || "Ação de usabilidade registrada",
+        timestamp: new Date().toISOString(),
+        bagagens: Array.isArray(bagagens) ? bagagens : [],
+        detalhesExtra: detalhesExtra || ""
+      };
+
+      const logs = getUsabilityLogs();
+      logs.unshift(newLog); // prepend latest
+      saveUsabilityLogs(logs);
+
+      return new Response(JSON.stringify(newLog), {
+        status: 201,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    if (method === "DELETE") {
+      saveUsabilityLogs([]);
+      return new Response(JSON.stringify({ success: true, message: "Histórico de usabilidade limpo com sucesso." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+
   return new Response(JSON.stringify({ error: "Endpoint não suportado no modo mock" }), {
     status: 404,
     headers: { "Content-Type": "application/json" }
@@ -654,5 +726,25 @@ export function getActiveGeminiKeyStatus(): {
   }
 
   return { hasKey, source, provider: "gemini", geminiKey };
+}
+
+export async function recordUsabilityLog(logData: {
+  usuarioNome: string;
+  usuarioMatricula: string;
+  usuarioEmail: string;
+  acao: string;
+  descricao: string;
+  bagagens?: any[];
+  detalhesExtra?: string;
+}) {
+  try {
+    await apiFetch("/api/usability-logs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(logData)
+    });
+  } catch (err) {
+    console.error("Falha ao registrar log de usabilidade:", err);
+  }
 }
 

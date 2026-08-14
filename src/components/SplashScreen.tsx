@@ -1,14 +1,38 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowRight, Sparkles, Globe, Plane } from "lucide-react";
+import { ArrowRight, Sparkles, Globe, Plane, Video, Volume2, VolumeX } from "lucide-react";
 
 interface SplashScreenProps {
   onComplete: () => void;
   userName?: string;
 }
 
-export default function SplashScreen({ onComplete, userName = "Naum Ramos" }: SplashScreenProps) {
+export default function SplashScreen({ onComplete, userName = "Agente LATAM" }: SplashScreenProps) {
   const [step, setStep] = useState<number>(1);
+  const [videoUrl, setVideoUrl] = useState<string | null>(() => {
+    return localStorage.getItem("latam_opening_video_url") || null;
+  });
+  const [isMuted, setIsMuted] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setVideoUrl(url);
+      try {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (reader.result) {
+            localStorage.setItem("latam_opening_video_url", reader.result as string);
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        console.error("Erro ao salvar vídeo em base64:", err);
+      }
+    }
+  };
 
   // Play a soft, pleasant LATAM airline chime using Web Audio API
   const playChime = () => {
@@ -205,7 +229,7 @@ export default function SplashScreen({ onComplete, userName = "Naum Ramos" }: Sp
         )}
       </AnimatePresence>
 
-      {/* TOP BAR: OPERATOR BADGE & STATUS */}
+      {/* TOP BAR: OPERATOR BADGE & VIDEO CUSTOMIZER */}
       <motion.div 
         initial={{ opacity: 0, y: -15 }}
         animate={{ opacity: 1, y: 0 }}
@@ -218,9 +242,19 @@ export default function SplashScreen({ onComplete, userName = "Naum Ramos" }: Sp
             Operador Logado: <span className="text-slate-800">{userName}</span>
           </span>
         </div>
-        <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-600 bg-white/70 backdrop-blur-sm border border-slate-200 px-3 py-1 rounded-full shadow-xs">
-          Terminal GRU Airport
-        </span>
+
+        {/* MP4 VIDEO UPLOADER CONTROL */}
+        <div className="flex items-center gap-2">
+          {videoUrl && (
+            <button
+              type="button"
+              onClick={() => setIsMuted(!isMuted)}
+              className="bg-black/60 hover:bg-black/80 text-white p-2 rounded-full border border-white/20 transition cursor-pointer"
+            >
+              {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+            </button>
+          )}
+        </div>
       </motion.div>
 
       {/* CENTER ANIMATED LATAM LOGO & TEXT (RESPONSIVE PC/TABLET/MOBILE) */}

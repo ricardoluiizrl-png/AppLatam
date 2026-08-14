@@ -40,6 +40,38 @@ export interface ProcessoPIR {
   deleted: boolean;
 }
 
+export type UsabilityActionType =
+  | 'LOGIN'
+  | 'BIPAGEM_ETIQUETA'
+  | 'CADASTRO_MANUAL'
+  | 'SALVAMENTO_LOTE'
+  | 'CRIACAO_PROCESSO_PIR'
+  | 'EXCLUSAO_BAGAGEM'
+  | 'RESTAURACAO_BAGAGEM';
+
+export interface UsabilityLogBagagem {
+  etiqueta: string;
+  pnr: string;
+  vooOrigem?: string;
+  situacao?: string;
+  corTipo?: string;
+  dataVoo?: string;
+  observacoes?: string;
+  scanned?: boolean;
+}
+
+export interface UsabilityLog {
+  id: string;
+  usuarioNome: string;
+  usuarioMatricula: string;
+  usuarioEmail: string;
+  acao: UsabilityActionType;
+  descricao: string;
+  timestamp: string;
+  bagagens?: UsabilityLogBagagem[];
+  detalhesExtra?: string;
+}
+
 export const SITUACOES: Record<SituacaoType, { label: string; bg: string; text: string }> = {
   PR: { label: 'PR - Processo PIR', bg: 'bg-blue-100 text-blue-800 border-blue-200', text: 'text-blue-800' },
   73: { label: '73 - Abandonada', bg: 'bg-amber-100 text-amber-800 border-amber-200', text: 'text-amber-800' },
@@ -51,3 +83,15 @@ export const SITUACOES: Record<SituacaoType, { label: string; bg: string; text: 
   NE: { label: 'NE - Não Embarcado', bg: 'bg-red-100 text-red-800 border-red-200', text: 'text-red-800 font-semibold' },
   OT: { label: 'OT - Outra Situação', bg: 'bg-slate-100 text-slate-800 border-slate-200', text: 'text-slate-800' },
 };
+
+export interface AppNotification {
+  id: string;
+  type: 'csv_generated' | 'tag_read_error' | 'info' | 'success' | 'warning';
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  linkTab?: string;
+  details?: string;
+}
+
